@@ -1,5 +1,6 @@
 #include <chrono>
 #include <thread>
+#include <vector>
 
 #include <catch2/catch_test_macros.hpp>
 #include <httplib.h>
@@ -72,7 +73,7 @@ TEST_CASE("aggregate stub serializes to expected shape") {
         .category = "illustrative",
         .mode = "mir12",
         .options = ppa::CritiqueOptions{},
-        .metadata = ppa::RequestMetadata{},
+        .metadata = ppa::RequestMetadata{.width = 3840, .height = 2160, .icc_profile = "sRGB", .keywords = {}},
     });
 
     const auto json_response = json(response);
@@ -80,6 +81,23 @@ TEST_CASE("aggregate stub serializes to expected shape") {
     CHECK(json_response.at("aggregate").at("classification") == "C");
     CHECK(json_response.at("aggregate").at("summary") == "stub critique response");
     CHECK(json_response.at("semantic").is_null());
+}
+
+TEST_CASE("ollama stub critique includes semantic block when requested") {
+    const auto response = ppa::api::critique_payload(ppa::CritiqueRequest{
+        .image = ppa::ImageInput{.path = "/tmp/photo.jpg"},
+        .photo = ppa::PhotoInfo{.id = "1", .file_name = "photo.jpg"},
+        .category = "illustrative",
+        .mode = "mir12",
+        .options = ppa::CritiqueOptions{.run_preflight = true, .run_semantic = true, .semantic_provider = "ollama"},
+        .metadata = ppa::RequestMetadata{.width = 3840, .height = 2160, .icc_profile = "sRGB", .keywords = {"portrait"}},
+    });
+
+    REQUIRE(response.semantic.has_value());
+    CHECK(response.runtime.semantic_provider == "ollama");
+    CHECK(response.runtime.model == "qwen2.5vl:7b");
+    CHECK(response.semantic->votes.size() == 1);
+    CHECK(response.aggregate.summary.find("stub Ollama critique") != std::string::npos);
 }
 
 TEST_CASE("health endpoint returns ok payload") {
@@ -107,4 +125,38 @@ TEST_CASE("capabilities endpoint returns provider list") {
     CHECK(body.at("semantic").at("default_provider") == "ollama");
     CHECK(body.at("semantic").at("providers").at(0).at("name") == "disabled");
     CHECK(body.at("semantic").at("providers").at(1).at("name") == "ollama");
+}
+
+TEST_CASE("critique endpoint returns semantic payload when enabled") {
+    TestServer server;
+    httplib::Client client("127.0.0.1", server.port());
+
+    const auto response = client.Post(
+        "/v1/critique",
+        R"({
+            "image": {"path": "/tmp/ppa-critique/photo-001.jpg"},
+            "photo": {"id": "lr-photo-001", "file_name": "photo-001.jpg"},
+            "category": "illustrative",
+            "mode": "mir12",
+            "options": {
+                "run_preflight": true,
+                "run_semantic": true,
+                "semantic_provider": "ollama"
+            },
+            "metadata": {
+                "width": 3840,
+                "height": 2160,
+                "icc_profile": "sRGB",
+                "keywords": ["portrait"]
+            }
+        })",
+        "application/json");
+
+    REQUIRE(response);
+    REQUIRE(response->status == 200);
+
+    const auto body = json::parse(response->body);
+    CHECK(body.at("runtime").at("semantic_provider") == "ollama");
+    CHECK(body.at("semantic").at("votes").size() == 1);
+    CHECK(body.at("aggregate").at("summary").get<std::string>().find("stub Ollama critique") != std::string::npos);
 }
