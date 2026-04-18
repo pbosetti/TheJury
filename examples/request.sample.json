@@ -1,0 +1,24 @@
+{
+  "image": {
+    "path": "/tmp/ppa-critique/photo-001.jpg"
+  },
+  "photo": {
+    "id": "lr-photo-001",
+    "file_name": "photo-001.jpg"
+  },
+  "category": "illustrative",
+  "mode": "mir12",
+  "options": {
+    "run_preflight": true,
+    "run_semantic": false,
+    "semantic_provider": "disabled"
+  },
+  "metadata": {
+    "width": 3840,
+    "height": 2160,
+    "icc_profile": "sRGB",
+    "keywords": [
+      "portrait"
+    ]
+  }
+}
