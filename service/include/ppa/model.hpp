@@ -83,6 +83,20 @@ struct PreflightReport {
     TechnicalScores technical_scores;
 };
 
+struct JudgeVote {
+    std::string judge_id;
+    std::string vote;
+    double confidence{0.0};
+    std::string rationale;
+};
+
+struct SemanticResult {
+    std::string summary;
+    std::vector<JudgeVote> votes;
+    std::vector<std::string> strengths;
+    std::vector<std::string> improvements;
+};
+
 struct AggregateResult {
     std::string classification{"C"};
     double merit_probability{0.0};
@@ -94,7 +108,7 @@ struct CritiqueResponse {
     std::string request_id{"stub-0001"};
     RuntimeInfo runtime;
     PreflightReport preflight;
-    std::optional<json> semantic{std::nullopt};
+    std::optional<SemanticResult> semantic{std::nullopt};
     AggregateResult aggregate;
 };
 
@@ -114,11 +128,9 @@ inline void from_json(const json& j, PhotoInfo& value) {
 }
 
 inline void to_json(json& j, const CritiqueOptions& value) {
-    j = json{
-        {"run_preflight", value.run_preflight},
-        {"run_semantic", value.run_semantic},
-        {"semantic_provider", value.semantic_provider},
-    };
+    j = json{{"run_preflight", value.run_preflight},
+             {"run_semantic", value.run_semantic},
+             {"semantic_provider", value.semantic_provider}};
 }
 inline void from_json(const json& j, CritiqueOptions& value) {
     j.at("run_preflight").get_to(value.run_preflight);
@@ -127,12 +139,10 @@ inline void from_json(const json& j, CritiqueOptions& value) {
 }
 
 inline void to_json(json& j, const RequestMetadata& value) {
-    j = json{
-        {"width", value.width},
-        {"height", value.height},
-        {"icc_profile", value.icc_profile},
-        {"keywords", value.keywords},
-    };
+    j = json{{"width", value.width},
+             {"height", value.height},
+             {"icc_profile", value.icc_profile},
+             {"keywords", value.keywords}};
 }
 inline void from_json(const json& j, RequestMetadata& value) {
     j.at("width").get_to(value.width);
@@ -142,14 +152,12 @@ inline void from_json(const json& j, RequestMetadata& value) {
 }
 
 inline void to_json(json& j, const CritiqueRequest& value) {
-    j = json{
-        {"image", value.image},
-        {"photo", value.photo},
-        {"category", value.category},
-        {"mode", value.mode},
-        {"options", value.options},
-        {"metadata", value.metadata},
-    };
+    j = json{{"image", value.image},
+             {"photo", value.photo},
+             {"category", value.category},
+             {"mode", value.mode},
+             {"options", value.options},
+             {"metadata", value.metadata}};
 }
 inline void from_json(const json& j, CritiqueRequest& value) {
     j.at("image").get_to(value.image);
@@ -166,52 +174,129 @@ inline void to_json(json& j, const ProviderCapability& value) {
         j["models"] = value.models;
     }
 }
+inline void from_json(const json& j, ProviderCapability& value) {
+    j.at("name").get_to(value.name);
+    j.at("available").get_to(value.available);
+    if (j.contains("models")) {
+        j.at("models").get_to(value.models);
+    }
+}
 
 inline void to_json(json& j, const SemanticCapabilities& value) {
-    j = json{
-        {"enabled", value.enabled},
-        {"default_provider", value.default_provider},
-        {"providers", value.providers},
-    };
+    j = json{{"enabled", value.enabled},
+             {"default_provider", value.default_provider},
+             {"providers", value.providers}};
+}
+inline void from_json(const json& j, SemanticCapabilities& value) {
+    j.at("enabled").get_to(value.enabled);
+    j.at("default_provider").get_to(value.default_provider);
+    j.at("providers").get_to(value.providers);
 }
 
 inline void to_json(json& j, const CapabilitiesResponse& value) {
     j = json{{"service", value.service}, {"version", value.version}, {"semantic", value.semantic}};
 }
+inline void from_json(const json& j, CapabilitiesResponse& value) {
+    j.at("service").get_to(value.service);
+    j.at("version").get_to(value.version);
+    j.at("semantic").get_to(value.semantic);
+}
 
 inline void to_json(json& j, const RuntimeInfo& value) {
     j = json{{"semantic_provider", value.semantic_provider}, {"model", value.model}};
+}
+inline void from_json(const json& j, RuntimeInfo& value) {
+    j.at("semantic_provider").get_to(value.semantic_provider);
+    j.at("model").get_to(value.model);
 }
 
 inline void to_json(json& j, const PreflightCheck& value) {
     j = json{{"id", value.id}, {"result", value.result}, {"message", value.message}};
 }
+inline void from_json(const json& j, PreflightCheck& value) {
+    j.at("id").get_to(value.id);
+    j.at("result").get_to(value.result);
+    j.at("message").get_to(value.message);
+}
 
 inline void to_json(json& j, const TechnicalScores& value) {
-    j = json{
-        {"technical_excellence", value.technical_excellence},
-        {"color_balance", value.color_balance},
-        {"lighting", value.lighting},
-        {"composition", value.composition},
-    };
+    j = json{{"technical_excellence", value.technical_excellence},
+             {"color_balance", value.color_balance},
+             {"lighting", value.lighting},
+             {"composition", value.composition}};
+}
+inline void from_json(const json& j, TechnicalScores& value) {
+    j.at("technical_excellence").get_to(value.technical_excellence);
+    j.at("color_balance").get_to(value.color_balance);
+    j.at("lighting").get_to(value.lighting);
+    j.at("composition").get_to(value.composition);
 }
 
 inline void to_json(json& j, const PreflightReport& value) {
     j = json{{"status", value.status}, {"checks", value.checks}, {"technical_scores", value.technical_scores}};
 }
+inline void from_json(const json& j, PreflightReport& value) {
+    j.at("status").get_to(value.status);
+    j.at("checks").get_to(value.checks);
+    j.at("technical_scores").get_to(value.technical_scores);
+}
+
+inline void to_json(json& j, const JudgeVote& value) {
+    j = json{{"judge_id", value.judge_id},
+             {"vote", value.vote},
+             {"confidence", value.confidence},
+             {"rationale", value.rationale}};
+}
+inline void from_json(const json& j, JudgeVote& value) {
+    j.at("judge_id").get_to(value.judge_id);
+    j.at("vote").get_to(value.vote);
+    j.at("confidence").get_to(value.confidence);
+    j.at("rationale").get_to(value.rationale);
+}
+
+inline void to_json(json& j, const SemanticResult& value) {
+    j = json{{"summary", value.summary},
+             {"votes", value.votes},
+             {"strengths", value.strengths},
+             {"improvements", value.improvements}};
+}
+inline void from_json(const json& j, SemanticResult& value) {
+    j.at("summary").get_to(value.summary);
+    j.at("votes").get_to(value.votes);
+    j.at("strengths").get_to(value.strengths);
+    j.at("improvements").get_to(value.improvements);
+}
 
 inline void to_json(json& j, const AggregateResult& value) {
-    j = json{{"classification", value.classification}, {"merit_probability", value.merit_probability}, {"confidence", value.confidence}, {"summary", value.summary}};
+    j = json{{"classification", value.classification},
+             {"merit_probability", value.merit_probability},
+             {"confidence", value.confidence},
+             {"summary", value.summary}};
+}
+inline void from_json(const json& j, AggregateResult& value) {
+    j.at("classification").get_to(value.classification);
+    j.at("merit_probability").get_to(value.merit_probability);
+    j.at("confidence").get_to(value.confidence);
+    j.at("summary").get_to(value.summary);
 }
 
 inline void to_json(json& j, const CritiqueResponse& value) {
-    j = json{
-        {"request_id", value.request_id},
-        {"runtime", value.runtime},
-        {"preflight", value.preflight},
-        {"semantic", value.semantic.has_value() ? *value.semantic : json(nullptr)},
-        {"aggregate", value.aggregate},
-    };
+    j = json{{"request_id", value.request_id},
+             {"runtime", value.runtime},
+             {"preflight", value.preflight},
+             {"semantic", value.semantic.has_value() ? json(*value.semantic) : json(nullptr)},
+             {"aggregate", value.aggregate}};
+}
+inline void from_json(const json& j, CritiqueResponse& value) {
+    j.at("request_id").get_to(value.request_id);
+    j.at("runtime").get_to(value.runtime);
+    j.at("preflight").get_to(value.preflight);
+    if (j.contains("semantic") && !j.at("semantic").is_null()) {
+        value.semantic = j.at("semantic").get<SemanticResult>();
+    } else {
+        value.semantic = std::nullopt;
+    }
+    j.at("aggregate").get_to(value.aggregate);
 }
 
 }  // namespace ppa

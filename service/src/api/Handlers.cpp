@@ -7,6 +7,11 @@ namespace ppa::api {
 namespace {
 constexpr auto* kJsonMimeType = "application/json";
 
+CritiqueService& critique_service() {
+    static CritiqueService service;
+    return service;
+}
+
 void set_json(httplib::Response& response, const nlohmann::json& payload, int status = 200) {
     response.status = status;
     response.set_content(payload.dump(2), kJsonMimeType);
@@ -18,37 +23,11 @@ nlohmann::json health_payload() {
 }
 
 CapabilitiesResponse capabilities_payload() {
-    return CapabilitiesResponse{
-        .service = "ppa-companion",
-        .version = "0.1.0",
-        .semantic = SemanticCapabilities{
-            .enabled = true,
-            .default_provider = "ollama",
-            .providers = {
-                ProviderCapability{.name = "disabled", .available = true, .models = {}},
-                ProviderCapability{.name = "ollama", .available = false, .models = {"qwen2.5vl:7b", "qwen2.5vl:3b"}},
-            },
-        },
-    };
+    return critique_service().capabilities();
 }
 
 CritiqueResponse critique_payload(const CritiqueRequest& request) {
-    return CritiqueResponse{
-        .request_id = "stub-0001",
-        .runtime = RuntimeInfo{
-            .semantic_provider = request.options.semantic_provider,
-            .model = request.options.run_semantic && request.options.semantic_provider == "ollama" ? "qwen2.5vl:7b" : "",
-        },
-        .preflight = PreflightReport{
-            .status = "pass",
-            .checks = {
-                PreflightCheck{.id = "dimensions", .result = "pass", .message = "stub"},
-            },
-            .technical_scores = TechnicalScores{},
-        },
-        .semantic = std::nullopt,
-        .aggregate = AggregateResult{},
-    };
+    return critique_service().critique(request);
 }
 
 void register_routes(httplib::Server& server) {

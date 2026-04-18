@@ -2,7 +2,7 @@
 
 #include <httplib.h>
 
-#include "ppa/model.hpp"
+#include "ppa/core/CritiqueService.hpp"
 
 namespace ppa::api {
 
