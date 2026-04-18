@@ -1,0 +1,30 @@
+{
+  "request_id": "stub-0001",
+  "runtime": {
+    "semantic_provider": "disabled",
+    "model": ""
+  },
+  "preflight": {
+    "status": "pass",
+    "checks": [
+      {
+        "id": "dimensions",
+        "result": "pass",
+        "message": "stub"
+      }
+    ],
+    "technical_scores": {
+      "technical_excellence": 0.0,
+      "color_balance": 0.0,
+      "lighting": 0.0,
+      "composition": 0.0
+    }
+  },
+  "semantic": null,
+  "aggregate": {
+    "classification": "C",
+    "merit_probability": 0.0,
+    "confidence": 0.0,
+    "summary": "stub critique response"
+  }
+}
