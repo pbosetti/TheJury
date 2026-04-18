@@ -114,7 +114,11 @@ inline void from_json(const json& j, PhotoInfo& value) {
 }
 
 inline void to_json(json& j, const CritiqueOptions& value) {
-    j = json{{"run_preflight", value.run_preflight}, {"run_semantic", value.run_semantic}, {"semantic_provider", value.semantic_provider}};
+    j = json{
+        {"run_preflight", value.run_preflight},
+        {"run_semantic", value.run_semantic},
+        {"semantic_provider", value.semantic_provider},
+    };
 }
 inline void from_json(const json& j, CritiqueOptions& value) {
     j.at("run_preflight").get_to(value.run_preflight);
@@ -123,7 +127,12 @@ inline void from_json(const json& j, CritiqueOptions& value) {
 }
 
 inline void to_json(json& j, const RequestMetadata& value) {
-    j = json{{"width", value.width}, {"height", value.height}, {"icc_profile", value.icc_profile}, {"keywords", value.keywords}};
+    j = json{
+        {"width", value.width},
+        {"height", value.height},
+        {"icc_profile", value.icc_profile},
+        {"keywords", value.keywords},
+    };
 }
 inline void from_json(const json& j, RequestMetadata& value) {
     j.at("width").get_to(value.width);
@@ -133,7 +142,14 @@ inline void from_json(const json& j, RequestMetadata& value) {
 }
 
 inline void to_json(json& j, const CritiqueRequest& value) {
-    j = json{{"image", value.image}, {"photo", value.photo}, {"category", value.category}, {"mode", value.mode}, {"options", value.options}, {"metadata", value.metadata}};
+    j = json{
+        {"image", value.image},
+        {"photo", value.photo},
+        {"category", value.category},
+        {"mode", value.mode},
+        {"options", value.options},
+        {"metadata", value.metadata},
+    };
 }
 inline void from_json(const json& j, CritiqueRequest& value) {
     j.at("image").get_to(value.image);
@@ -152,7 +168,11 @@ inline void to_json(json& j, const ProviderCapability& value) {
 }
 
 inline void to_json(json& j, const SemanticCapabilities& value) {
-    j = json{{"enabled", value.enabled}, {"default_provider", value.default_provider}, {"providers", value.providers}};
+    j = json{
+        {"enabled", value.enabled},
+        {"default_provider", value.default_provider},
+        {"providers", value.providers},
+    };
 }
 
 inline void to_json(json& j, const CapabilitiesResponse& value) {
@@ -168,7 +188,12 @@ inline void to_json(json& j, const PreflightCheck& value) {
 }
 
 inline void to_json(json& j, const TechnicalScores& value) {
-    j = json{{"technical_excellence", value.technical_excellence}, {"color_balance", value.color_balance}, {"lighting", value.lighting}, {"composition", value.composition}};
+    j = json{
+        {"technical_excellence", value.technical_excellence},
+        {"color_balance", value.color_balance},
+        {"lighting", value.lighting},
+        {"composition", value.composition},
+    };
 }
 
 inline void to_json(json& j, const PreflightReport& value) {
@@ -180,7 +205,13 @@ inline void to_json(json& j, const AggregateResult& value) {
 }
 
 inline void to_json(json& j, const CritiqueResponse& value) {
-    j = json{{"request_id", value.request_id}, {"runtime", value.runtime}, {"preflight", value.preflight}, {"semantic", value.semantic.has_value() ? *value.semantic : json(nullptr)}, {"aggregate", value.aggregate}};
+    j = json{
+        {"request_id", value.request_id},
+        {"runtime", value.runtime},
+        {"preflight", value.preflight},
+        {"semantic", value.semantic.has_value() ? *value.semantic : json(nullptr)},
+        {"aggregate", value.aggregate},
+    };
 }
 
 }  // namespace ppa
