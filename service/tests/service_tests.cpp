@@ -14,9 +14,12 @@ class TestServer {
 public:
     TestServer() {
         ppa::api::register_routes(server_);
-        port_ = server_.bind_to_port("127.0.0.1", 0);
+        port_ = server_.bind_to_any_port("127.0.0.1");
+        if (port_ <= 0) {
+            throw std::runtime_error("failed to bind test server");
+        }
         worker_ = std::thread([this] { server_.listen_after_bind(); });
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        server_.wait_until_ready();
     }
 
     ~TestServer() {
