@@ -12,17 +12,17 @@ namespace ppa {
 
 class SemanticProviderFactory {
 public:
-    explicit SemanticProviderFactory(OllamaClient client = OllamaClient{}) : client_(std::move(client)) {}
+    explicit SemanticProviderFactory(OllamaClient client = OllamaClient{}) : _client(std::move(client)) {}
 
     [[nodiscard]] std::unique_ptr<SemanticProvider> create(const std::string& provider_name) const {
         if (provider_name == "ollama") {
-            return std::make_unique<OllamaProvider>(client_, client_.default_model());
+            return std::make_unique<OllamaProvider>(_client);
         }
         return std::make_unique<DisabledSemanticProvider>();
     }
 
 private:
-    OllamaClient client_;
+    OllamaClient _client;
 };
 
 }  // namespace ppa

@@ -15,7 +15,7 @@ public:
 class SemanticProvider {
 public:
     virtual ~SemanticProvider() = default;
-    virtual SemanticResult evaluate(const CritiqueRequest& request,
+    virtual SemanticOutput evaluate(const CritiqueRequest& request,
                                     const PreflightReport& preflight) = 0;
 };
 

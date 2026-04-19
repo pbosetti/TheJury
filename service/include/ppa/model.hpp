@@ -30,6 +30,11 @@ struct RequestMetadata {
     int height{0};
     std::string icc_profile;
     std::vector<std::string> keywords;
+    std::string original_path;
+    std::string capture_time;
+    std::string file_format;
+    std::string color_label;
+    int rating{0};
 };
 
 struct CritiqueRequest {
@@ -97,6 +102,11 @@ struct SemanticResult {
     std::vector<std::string> improvements;
 };
 
+struct SemanticOutput {
+    SemanticResult result;
+    std::string model;
+};
+
 struct AggregateResult {
     std::string classification{"C"};
     double merit_probability{0.0};
@@ -110,6 +120,11 @@ struct CritiqueResponse {
     PreflightReport preflight;
     std::optional<SemanticResult> semantic{std::nullopt};
     AggregateResult aggregate;
+};
+
+struct ErrorResponse {
+    std::string error;
+    std::string message;
 };
 
 inline void to_json(json& j, const ImageInput& value) {
@@ -142,13 +157,33 @@ inline void to_json(json& j, const RequestMetadata& value) {
     j = json{{"width", value.width},
              {"height", value.height},
              {"icc_profile", value.icc_profile},
-             {"keywords", value.keywords}};
+             {"keywords", value.keywords},
+             {"original_path", value.original_path},
+             {"capture_time", value.capture_time},
+             {"file_format", value.file_format},
+             {"color_label", value.color_label},
+             {"rating", value.rating}};
 }
 inline void from_json(const json& j, RequestMetadata& value) {
     j.at("width").get_to(value.width);
     j.at("height").get_to(value.height);
     j.at("icc_profile").get_to(value.icc_profile);
     j.at("keywords").get_to(value.keywords);
+    if (j.contains("original_path")) {
+        j.at("original_path").get_to(value.original_path);
+    }
+    if (j.contains("capture_time")) {
+        j.at("capture_time").get_to(value.capture_time);
+    }
+    if (j.contains("file_format")) {
+        j.at("file_format").get_to(value.file_format);
+    }
+    if (j.contains("color_label")) {
+        j.at("color_label").get_to(value.color_label);
+    }
+    if (j.contains("rating")) {
+        j.at("rating").get_to(value.rating);
+    }
 }
 
 inline void to_json(json& j, const CritiqueRequest& value) {
@@ -265,6 +300,14 @@ inline void from_json(const json& j, SemanticResult& value) {
     j.at("votes").get_to(value.votes);
     j.at("strengths").get_to(value.strengths);
     j.at("improvements").get_to(value.improvements);
+}
+
+inline void to_json(json& j, const ErrorResponse& value) {
+    j = json{{"error", value.error}, {"message", value.message}};
+}
+inline void from_json(const json& j, ErrorResponse& value) {
+    j.at("error").get_to(value.error);
+    j.at("message").get_to(value.message);
 }
 
 inline void to_json(json& j, const AggregateResult& value) {

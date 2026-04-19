@@ -1,4 +1,7 @@
 #include <chrono>
+#include <filesystem>
+#include <fstream>
+#include <memory>
 #include <thread>
 #include <vector>
 
@@ -6,37 +9,116 @@
 #include <httplib.h>
 #include <nlohmann/json.hpp>
 
+#include "ppa/api/ApiError.hpp"
 #include "ppa/api/Handlers.hpp"
+#include "ppa/config/ServiceConfig.hpp"
+#include "ppa/semantic/OllamaClient.hpp"
 
 namespace {
 using json = nlohmann::json;
 
+class TemporaryDirectory {
+public:
+    TemporaryDirectory() {
+        _path = std::filesystem::temp_directory_path() /
+                std::filesystem::path("thejury-tests-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+        std::filesystem::create_directories(_path);
+    }
+
+    ~TemporaryDirectory() {
+        std::error_code error;
+        std::filesystem::remove_all(_path, error);
+    }
+
+    [[nodiscard]] const std::filesystem::path& path() const { return _path; }
+
+private:
+    std::filesystem::path _path;
+};
+
+class MockOllamaTransport final : public ppa::OllamaTransport {
+public:
+    mutable std::vector<ppa::OllamaHttpResponse> get_responses;
+    mutable std::vector<ppa::OllamaHttpResponse> post_responses;
+    mutable std::string last_get_path;
+    mutable std::string last_post_path;
+    mutable std::string last_post_body;
+
+    [[nodiscard]] ppa::OllamaHttpResponse get(const std::string& path) const override {
+        last_get_path = path;
+        if (get_responses.empty()) {
+            return ppa::OllamaHttpResponse{.status = 0, .body = "", .error = "no mocked GET response"};
+        }
+        const auto response = get_responses.front();
+        get_responses.erase(get_responses.begin());
+        return response;
+    }
+
+    [[nodiscard]] ppa::OllamaHttpResponse post(const std::string& path, const std::string& body) const override {
+        last_post_path = path;
+        last_post_body = body;
+        if (post_responses.empty()) {
+            return ppa::OllamaHttpResponse{.status = 0, .body = "", .error = "no mocked POST response"};
+        }
+        const auto response = post_responses.front();
+        post_responses.erase(post_responses.begin());
+        return response;
+    }
+};
+
 class TestServer {
 public:
-    TestServer() {
-        ppa::api::register_routes(server_);
-        port_ = server_.bind_to_any_port("127.0.0.1");
-        if (port_ <= 0) {
+    explicit TestServer(ppa::CritiqueService& service) {
+        ppa::api::register_routes(_server, service);
+        _port = _server.bind_to_any_port("127.0.0.1");
+        if (_port <= 0) {
             throw std::runtime_error("failed to bind test server");
         }
-        worker_ = std::thread([this] { server_.listen_after_bind(); });
-        server_.wait_until_ready();
+        _worker = std::thread([this] { _server.listen_after_bind(); });
+        _server.wait_until_ready();
     }
 
     ~TestServer() {
-        server_.stop();
-        if (worker_.joinable()) {
-            worker_.join();
+        _server.stop();
+        if (_worker.joinable()) {
+            _worker.join();
         }
     }
 
-    [[nodiscard]] int port() const { return port_; }
+    [[nodiscard]] int port() const { return _port; }
 
 private:
-    httplib::Server server_;
-    int port_{0};
-    std::thread worker_;
+    httplib::Server _server;
+    int _port{0};
+    std::thread _worker;
 };
+
+std::string make_chat_response(const json& semantic_json) {
+    return json{
+        {"model", "qwen2.5vl:7b"},
+        {"message", {{"role", "assistant"}, {"content", semantic_json.dump()}}},
+        {"done", true},
+    }
+        .dump();
+}
+
+ppa::CritiqueRequest semantic_request() {
+    return ppa::CritiqueRequest{
+        .image = ppa::ImageInput{.path = "/tmp/photo.jpg"},
+        .photo = ppa::PhotoInfo{.id = "1", .file_name = "photo.jpg"},
+        .category = "illustrative",
+        .mode = "mir12",
+        .options = ppa::CritiqueOptions{.run_preflight = true, .run_semantic = true, .semantic_provider = "ollama"},
+        .metadata =
+            ppa::RequestMetadata{
+                .width = 3840,
+                .height = 2160,
+                .icc_profile = "sRGB",
+                .keywords = {"portrait"},
+            },
+    };
+}
+
 }  // namespace
 
 TEST_CASE("critique requests deserialize from json") {
@@ -54,6 +136,11 @@ TEST_CASE("critique requests deserialize from json") {
             "width": 3840,
             "height": 2160,
             "icc_profile": "sRGB",
+            "original_path": "/photos/library/photo-001.cr3",
+            "capture_time": "2026-04-19 10:30:00",
+            "file_format": "RAW",
+            "color_label": "Red",
+            "rating": 4,
             "keywords": ["portrait"]
         }
     })");
@@ -63,18 +150,132 @@ TEST_CASE("critique requests deserialize from json") {
     CHECK(request.image.path == "/tmp/ppa-critique/photo-001.jpg");
     CHECK(request.photo.id == "lr-photo-001");
     CHECK(request.options.semantic_provider == "disabled");
+    CHECK(request.metadata.original_path == "/photos/library/photo-001.cr3");
+    CHECK(request.metadata.rating == 4);
     CHECK(request.metadata.keywords == std::vector<std::string>{"portrait"});
 }
 
+TEST_CASE("service config defaults apply when config file is missing") {
+    const auto temp_dir = TemporaryDirectory{};
+    const auto loaded = ppa::load_service_config(temp_dir.path());
+
+    CHECK_FALSE(loaded.from_file);
+    CHECK(loaded.config.ollama.base_url == "http://127.0.0.1:11434");
+    CHECK(loaded.config.ollama.model == "qwen2.5vl:7b");
+    CHECK(loaded.config.ollama.fallback_model == "qwen2.5vl:3b");
+    CHECK(loaded.config.ollama.timeout_ms == 120000);
+    CHECK(loaded.config.semantic.default_provider == "ollama");
+}
+
+TEST_CASE("service config overrides defaults from TOML") {
+    const auto temp_dir = TemporaryDirectory{};
+    auto output = std::ofstream(temp_dir.path() / "ppa_service.toml");
+    output << "[ollama]\n";
+    output << "base_url = \"http://127.0.0.1:22434\"\n";
+    output << "model = \"model-a\"\n";
+    output << "fallback_model = \"model-b\"\n";
+    output << "timeout_ms = 30000\n";
+    output << "[semantic]\n";
+    output << "default_provider = \"disabled\"\n";
+    output.close();
+
+    const auto loaded = ppa::load_service_config(temp_dir.path());
+    CHECK(loaded.from_file);
+    CHECK(loaded.config.ollama.base_url == "http://127.0.0.1:22434");
+    CHECK(loaded.config.ollama.model == "model-a");
+    CHECK(loaded.config.ollama.fallback_model == "model-b");
+    CHECK(loaded.config.ollama.timeout_ms == 30000);
+    CHECK(loaded.config.semantic.default_provider == "disabled");
+}
+
+TEST_CASE("invalid TOML config fails clearly") {
+    const auto temp_dir = TemporaryDirectory{};
+    auto output = std::ofstream(temp_dir.path() / "ppa_service.toml");
+    output << "[ollama\n";
+    output.close();
+
+    CHECK_THROWS(ppa::load_service_config(temp_dir.path()));
+}
+
+TEST_CASE("ollama availability probe succeeds against mocked transport") {
+    auto transport = std::make_shared<MockOllamaTransport>();
+    transport->get_responses.push_back(ppa::OllamaHttpResponse{.status = 200, .body = "{}", .error = ""});
+
+    const auto client = ppa::OllamaClient(ppa::OllamaSettings{}, transport);
+    CHECK(client.is_available());
+    CHECK(transport->last_get_path == "/api/tags");
+}
+
+TEST_CASE("ollama client evaluates image request and falls back to secondary model") {
+    const auto temp_dir = TemporaryDirectory{};
+    const auto image_path = temp_dir.path() / "photo.jpg";
+    auto image = std::ofstream(image_path, std::ios::binary);
+    image << "jpeg-bytes";
+    image.close();
+
+    auto transport = std::make_shared<MockOllamaTransport>();
+    transport->post_responses.push_back(ppa::OllamaHttpResponse{.status = 404, .body = "", .error = ""});
+    transport->post_responses.push_back(
+        ppa::OllamaHttpResponse{.status = 200,
+                                .body = make_chat_response(json{
+                                    {"summary", "semantic summary"},
+                                    {"votes",
+                                     json::array({json{{"judge_id", "J1"},
+                                                       {"vote", "C"},
+                                                       {"confidence", 0.7},
+                                                       {"rationale", "Strong composition."}}})},
+                                    {"strengths", json::array({"Impact"})},
+                                    {"improvements", json::array({"Refine crop"})},
+                                }),
+                                .error = ""});
+
+    auto settings = ppa::OllamaSettings{};
+    settings.model = "primary-model";
+    settings.fallback_model = "secondary-model";
+    const auto client = ppa::OllamaClient(settings, transport);
+
+    const auto output = client.evaluate("Prompt text", image_path.string());
+    CHECK(output.model == "secondary-model");
+    CHECK(output.result.summary == "semantic summary");
+    CHECK(output.result.votes.size() == 1);
+
+    const auto request_json = json::parse(transport->last_post_body);
+    CHECK(transport->last_post_path == "/api/chat");
+    CHECK(request_json.at("model") == "secondary-model");
+    CHECK(request_json.at("messages").at(0).at("images").size() == 1);
+}
+
+TEST_CASE("invalid Ollama output is treated as an error") {
+    const auto temp_dir = TemporaryDirectory{};
+    const auto image_path = temp_dir.path() / "photo.jpg";
+    auto image = std::ofstream(image_path, std::ios::binary);
+    image << "jpeg-bytes";
+    image.close();
+
+    auto transport = std::make_shared<MockOllamaTransport>();
+    transport->post_responses.push_back(
+        ppa::OllamaHttpResponse{.status = 200,
+                                .body = json{{"message", {{"content", "{not-json}"}}}}.dump(),
+                                .error = ""});
+
+    const auto client = ppa::OllamaClient(ppa::OllamaSettings{}, transport);
+    CHECK_THROWS_AS(client.evaluate("Prompt text", image_path.string()), ppa::api::ApiError);
+}
+
 TEST_CASE("aggregate stub serializes to expected shape") {
-    const auto response = ppa::api::critique_payload(ppa::CritiqueRequest{
-        .image = ppa::ImageInput{.path = "/tmp/photo.jpg"},
-        .photo = ppa::PhotoInfo{.id = "1", .file_name = "photo.jpg"},
-        .category = "illustrative",
-        .mode = "mir12",
-        .options = ppa::CritiqueOptions{},
-        .metadata = ppa::RequestMetadata{.width = 3840, .height = 2160, .icc_profile = "sRGB", .keywords = {}},
-    });
+    auto service = ppa::CritiqueService{};
+    const auto response = ppa::api::critique_payload(service,
+                                                     ppa::CritiqueRequest{
+                                                         .image = ppa::ImageInput{.path = "/tmp/photo.jpg"},
+                                                         .photo = ppa::PhotoInfo{.id = "1", .file_name = "photo.jpg"},
+                                                         .category = "illustrative",
+                                                         .mode = "mir12",
+                                                         .options = ppa::CritiqueOptions{},
+                                                         .metadata = ppa::RequestMetadata{.width = 3840,
+                                                                                          .height = 2160,
+                                                                                          .icc_profile = "sRGB",
+                                                                                          .keywords = {}},
+                                                     });
 
     const auto json_response = json(response);
 
@@ -83,26 +284,66 @@ TEST_CASE("aggregate stub serializes to expected shape") {
     CHECK(json_response.at("semantic").is_null());
 }
 
-TEST_CASE("ollama stub critique includes semantic block when requested") {
-    const auto response = ppa::api::critique_payload(ppa::CritiqueRequest{
-        .image = ppa::ImageInput{.path = "/tmp/photo.jpg"},
-        .photo = ppa::PhotoInfo{.id = "1", .file_name = "photo.jpg"},
-        .category = "illustrative",
-        .mode = "mir12",
-        .options = ppa::CritiqueOptions{.run_preflight = true, .run_semantic = true, .semantic_provider = "ollama"},
-        .metadata = ppa::RequestMetadata{.width = 3840, .height = 2160, .icc_profile = "sRGB", .keywords = {"portrait"}},
-    });
+TEST_CASE("semantic critique returns populated response when Ollama succeeds") {
+    const auto temp_dir = TemporaryDirectory{};
+    const auto image_path = temp_dir.path() / "photo.jpg";
+    auto image = std::ofstream(image_path, std::ios::binary);
+    image << "jpeg-bytes";
+    image.close();
+
+    auto transport = std::make_shared<MockOllamaTransport>();
+    transport->post_responses.push_back(
+        ppa::OllamaHttpResponse{.status = 200,
+                                .body = make_chat_response(json{
+                                    {"summary", "semantic summary"},
+                                    {"votes",
+                                     json::array({json{{"judge_id", "J1"},
+                                                       {"vote", "C"},
+                                                       {"confidence", 0.7},
+                                                       {"rationale", "Strong composition."}}})},
+                                    {"strengths", json::array({"Impact"})},
+                                    {"improvements", json::array({"Refine crop"})},
+                                }),
+                                .error = ""});
+
+    auto config = ppa::ServiceConfig{};
+    config.ollama.model = "primary-model";
+    config.ollama.fallback_model = "secondary-model";
+
+    auto request = semantic_request();
+    request.image.path = image_path.string();
+
+    auto service = ppa::CritiqueService(config, ppa::OllamaClient(config.ollama, transport));
+    const auto response = ppa::api::critique_payload(service, request);
 
     REQUIRE(response.semantic.has_value());
     CHECK(response.runtime.semantic_provider == "ollama");
-    CHECK(response.runtime.model == "qwen2.5vl:7b");
+    CHECK(response.runtime.model == "primary-model");
     CHECK(response.semantic->votes.size() == 1);
-    CHECK(response.aggregate.summary.find("stub Ollama critique") != std::string::npos);
+    CHECK(response.aggregate.summary == "semantic summary");
+}
+
+TEST_CASE("semantic critique throws when Ollama is unavailable") {
+    const auto temp_dir = TemporaryDirectory{};
+    const auto image_path = temp_dir.path() / "photo.jpg";
+    auto image = std::ofstream(image_path, std::ios::binary);
+    image << "jpeg-bytes";
+    image.close();
+
+    auto transport = std::make_shared<MockOllamaTransport>();
+    transport->post_responses.push_back(ppa::OllamaHttpResponse{.status = 0, .body = "", .error = "connection refused"});
+
+    auto request = semantic_request();
+    request.image.path = image_path.string();
+
+    auto service = ppa::CritiqueService(ppa::ServiceConfig{}, ppa::OllamaClient(ppa::OllamaSettings{}, transport));
+    CHECK_THROWS_AS(ppa::api::critique_payload(service, request), ppa::api::ApiError);
 }
 
 TEST_CASE("health endpoint returns ok payload") {
-    TestServer server;
-    httplib::Client client("127.0.0.1", server.port());
+    auto service = ppa::CritiqueService{};
+    auto server = TestServer(service);
+    auto client = httplib::Client("127.0.0.1", server.port());
 
     const auto response = client.Get("/health");
 
@@ -112,8 +353,9 @@ TEST_CASE("health endpoint returns ok payload") {
 }
 
 TEST_CASE("capabilities endpoint returns provider list") {
-    TestServer server;
-    httplib::Client client("127.0.0.1", server.port());
+    auto service = ppa::CritiqueService{};
+    auto server = TestServer(service);
+    auto client = httplib::Client("127.0.0.1", server.port());
 
     const auto response = client.Get("/v1/capabilities");
 
@@ -127,36 +369,31 @@ TEST_CASE("capabilities endpoint returns provider list") {
     CHECK(body.at("semantic").at("providers").at(1).at("name") == "ollama");
 }
 
-TEST_CASE("critique endpoint returns semantic payload when enabled") {
-    TestServer server;
-    httplib::Client client("127.0.0.1", server.port());
+TEST_CASE("critique endpoint returns error payload when semantic backend is unavailable") {
+    const auto temp_dir = TemporaryDirectory{};
+    const auto image_path = temp_dir.path() / "photo.jpg";
+    auto image = std::ofstream(image_path, std::ios::binary);
+    image << "jpeg-bytes";
+    image.close();
 
-    const auto response = client.Post(
-        "/v1/critique",
-        R"({
-            "image": {"path": "/tmp/ppa-critique/photo-001.jpg"},
-            "photo": {"id": "lr-photo-001", "file_name": "photo-001.jpg"},
-            "category": "illustrative",
-            "mode": "mir12",
-            "options": {
-                "run_preflight": true,
-                "run_semantic": true,
-                "semantic_provider": "ollama"
-            },
-            "metadata": {
-                "width": 3840,
-                "height": 2160,
-                "icc_profile": "sRGB",
-                "keywords": ["portrait"]
-            }
-        })",
-        "application/json");
+    auto service = ppa::CritiqueService{};
+    auto server = TestServer(service);
+    auto client = httplib::Client("127.0.0.1", server.port());
+
+    const auto request = json{
+        {"image", {{"path", image_path.string()}}},
+        {"photo", {{"id", "lr-photo-001"}, {"file_name", "photo-001.jpg"}}},
+        {"category", "illustrative"},
+        {"mode", "mir12"},
+        {"options", {{"run_preflight", true}, {"run_semantic", true}, {"semantic_provider", "ollama"}}},
+        {"metadata", {{"width", 3840}, {"height", 2160}, {"icc_profile", "sRGB"}, {"keywords", json::array({"portrait"})}}},
+    };
+
+    const auto response = client.Post("/v1/critique", request.dump(), "application/json");
 
     REQUIRE(response);
-    REQUIRE(response->status == 200);
+    REQUIRE(response->status >= 400);
 
     const auto body = json::parse(response->body);
-    CHECK(body.at("runtime").at("semantic_provider") == "ollama");
-    CHECK(body.at("semantic").at("votes").size() == 1);
-    CHECK(body.at("aggregate").at("summary").get<std::string>().find("stub Ollama critique") != std::string::npos);
+    CHECK(body.at("error") == "semantic_unavailable");
 }

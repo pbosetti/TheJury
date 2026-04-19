@@ -4,6 +4,7 @@
 #include <string>
 
 #include "ppa/aggregate/SimpleAggregateEngine.hpp"
+#include "ppa/config/ServiceConfig.hpp"
 #include "ppa/preflight/StubPreflightEngine.hpp"
 #include "ppa/semantic/OllamaClient.hpp"
 #include "ppa/semantic/SemanticProviderFactory.hpp"
@@ -12,7 +13,13 @@ namespace ppa {
 
 class CritiqueService {
 public:
-    CritiqueService() = default;
+    CritiqueService() : CritiqueService(ServiceConfig{}) {}
+    explicit CritiqueService(ServiceConfig config)
+        : CritiqueService(config, OllamaClient{config.ollama}) {}
+    CritiqueService(ServiceConfig config, OllamaClient client)
+        : _config(std::move(config)),
+          _ollama_client(std::move(client)),
+          _semantic_factory(_ollama_client) {}
 
     [[nodiscard]] CapabilitiesResponse capabilities() const {
         return CapabilitiesResponse{
@@ -20,19 +27,19 @@ public:
             .version = "0.1.0",
             .semantic = SemanticCapabilities{
                 .enabled = true,
-                .default_provider = "ollama",
+                .default_provider = _config.semantic.default_provider,
                 .providers = {
                     ProviderCapability{.name = "disabled", .available = true, .models = {}},
                     ProviderCapability{.name = "ollama",
-                                       .available = ollama_client_.is_available(),
-                                       .models = ollama_client_.configured_models()},
+                                       .available = _ollama_client.is_available(),
+                                       .models = _ollama_client.configured_models()},
                 },
             },
         };
     }
 
     [[nodiscard]] CritiqueResponse critique(const CritiqueRequest& request) const {
-        auto preflight = preflight_engine_.run(request);
+        auto preflight = _preflight_engine.run(request);
         if (!request.options.run_preflight) {
             preflight.status = "skipped";
             preflight.checks = {PreflightCheck{.id = "preflight", .result = "skipped", .message = "preflight disabled by request"}};
@@ -42,12 +49,12 @@ public:
         auto provider_name = std::string{"disabled"};
         auto model = std::string{};
         if (request.options.run_semantic) {
-            provider_name = request.options.semantic_provider.empty() ? "disabled" : request.options.semantic_provider;
-            auto provider = semantic_factory_.create(provider_name);
-            semantic = provider->evaluate(request, preflight);
-            if (provider_name == "ollama") {
-                model = ollama_client_.default_model();
-            }
+            provider_name = request.options.semantic_provider.empty() ? _config.semantic.default_provider
+                                                                      : request.options.semantic_provider;
+            auto provider = _semantic_factory.create(provider_name);
+            const auto semantic_output = provider->evaluate(request, preflight);
+            semantic = semantic_output.result;
+            model = semantic_output.model;
         }
 
         return CritiqueResponse{
@@ -55,15 +62,16 @@ public:
             .runtime = RuntimeInfo{.semantic_provider = provider_name, .model = model},
             .preflight = preflight,
             .semantic = semantic,
-            .aggregate = aggregate_engine_.combine(preflight, semantic),
+            .aggregate = _aggregate_engine.combine(preflight, semantic),
         };
     }
 
 private:
-    mutable StubPreflightEngine preflight_engine_;
-    mutable SimpleAggregateEngine aggregate_engine_;
-    OllamaClient ollama_client_;
-    SemanticProviderFactory semantic_factory_{ollama_client_};
+    ServiceConfig _config;
+    mutable StubPreflightEngine _preflight_engine;
+    mutable SimpleAggregateEngine _aggregate_engine;
+    OllamaClient _ollama_client;
+    SemanticProviderFactory _semantic_factory;
 };
 
 }  // namespace ppa

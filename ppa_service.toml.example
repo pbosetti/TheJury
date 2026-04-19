@@ -1,0 +1,8 @@
+[ollama]
+base_url = "http://127.0.0.1:11434"
+model = "qwen2.5vl:7b"
+fallback_model = "qwen2.5vl:3b"
+timeout_ms = 120000
+
+[semantic]
+default_provider = "ollama"

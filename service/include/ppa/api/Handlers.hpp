@@ -7,8 +7,8 @@
 namespace ppa::api {
 
 nlohmann::json health_payload();
-CapabilitiesResponse capabilities_payload();
-CritiqueResponse critique_payload(const CritiqueRequest& request);
-void register_routes(httplib::Server& server);
+CapabilitiesResponse capabilities_payload(const CritiqueService& service);
+CritiqueResponse critique_payload(const CritiqueService& service, const CritiqueRequest& request);
+void register_routes(httplib::Server& server, CritiqueService& service);
 
 }  // namespace ppa::api

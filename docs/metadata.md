@@ -7,6 +7,12 @@ The plugin writes a minimal custom metadata set after each critique run.
 - `ppaCritiqueClassification`: aggregate result classification.
 - `ppaCritiqueMeritProbability`: aggregate merit probability value.
 - `ppaCritiqueConfidence`: aggregate confidence value.
+- `ppaCritiqueSemanticSummary`: semantic-stage summary text.
+- `ppaCritiqueSemanticVote`: semantic-stage vote from the first judge/model response.
+- `ppaCritiqueSemanticVoteConfidence`: confidence for the semantic vote.
+- `ppaCritiqueSemanticRationale`: rationale text for the semantic vote.
+- `ppaCritiqueSemanticStrengths`: comma-separated semantic strengths.
+- `ppaCritiqueSemanticImprovements`: comma-separated semantic improvements.
 - `ppaCritiqueLastAnalyzedAt`: UTC timestamp of the last critique submission.
 - `ppaCritiqueSemanticProvider`: semantic provider used for the run.
 - `ppaCritiqueModel`: semantic model name reported by the service.
