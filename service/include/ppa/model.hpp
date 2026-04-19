@@ -6,6 +6,8 @@
 
 #include <nlohmann/json.hpp>
 
+#include "ppa/config/ServiceConfig.hpp"
+
 namespace ppa {
 
 using json = nlohmann::json;
@@ -109,6 +111,7 @@ struct SemanticOutput {
 
 struct AggregateResult {
     std::string classification{"C"};
+    double merit_score{0.0};
     double merit_probability{0.0};
     double confidence{0.0};
     std::string summary{"stub critique response"};
@@ -126,6 +129,48 @@ struct ErrorResponse {
     std::string error;
     std::string message;
 };
+
+inline void to_json(json& j, const OllamaSettings& value) {
+    j = json{{"base_url", value.base_url},
+             {"model", value.model},
+             {"fallback_model", value.fallback_model},
+             {"timeout_ms", value.timeout_ms}};
+}
+inline void from_json(const json& j, OllamaSettings& value) {
+    if (j.contains("base_url")) {
+        j.at("base_url").get_to(value.base_url);
+    }
+    if (j.contains("model")) {
+        j.at("model").get_to(value.model);
+    }
+    if (j.contains("fallback_model")) {
+        j.at("fallback_model").get_to(value.fallback_model);
+    }
+    if (j.contains("timeout_ms")) {
+        j.at("timeout_ms").get_to(value.timeout_ms);
+    }
+}
+
+inline void to_json(json& j, const SemanticSettings& value) {
+    j = json{{"default_provider", value.default_provider}};
+}
+inline void from_json(const json& j, SemanticSettings& value) {
+    if (j.contains("default_provider")) {
+        j.at("default_provider").get_to(value.default_provider);
+    }
+}
+
+inline void to_json(json& j, const ServiceConfig& value) {
+    j = json{{"ollama", value.ollama}, {"semantic", value.semantic}};
+}
+inline void from_json(const json& j, ServiceConfig& value) {
+    if (j.contains("ollama")) {
+        j.at("ollama").get_to(value.ollama);
+    }
+    if (j.contains("semantic")) {
+        j.at("semantic").get_to(value.semantic);
+    }
+}
 
 inline void to_json(json& j, const ImageInput& value) {
     j = json{{"path", value.path}};
@@ -312,12 +357,16 @@ inline void from_json(const json& j, ErrorResponse& value) {
 
 inline void to_json(json& j, const AggregateResult& value) {
     j = json{{"classification", value.classification},
+             {"merit_score", value.merit_score},
              {"merit_probability", value.merit_probability},
              {"confidence", value.confidence},
              {"summary", value.summary}};
 }
 inline void from_json(const json& j, AggregateResult& value) {
     j.at("classification").get_to(value.classification);
+    if (j.contains("merit_score")) {
+        j.at("merit_score").get_to(value.merit_score);
+    }
     j.at("merit_probability").get_to(value.merit_probability);
     j.at("confidence").get_to(value.confidence);
     j.at("summary").get_to(value.summary);

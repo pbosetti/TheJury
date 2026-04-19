@@ -246,15 +246,21 @@ local function splitKeywords(value)
     return keywords
 end
 
-function Utils.getSelectedPhoto()
+function Utils.getSelectedPhotos()
     local catalog = LrApplication.activeCatalog()
-    local targetPhotos = catalog:getTargetPhotos()
-    if #targetPhotos ~= 1 then
-        LrDialogs.message('PPA Critique', 'Select exactly one photo before running the critique.', 'warning')
+    local activePhoto = catalog:getTargetPhoto()
+    if activePhoto == nil then
+        LrDialogs.message('PPA Critique', 'Select one or more photos before running the critique.', 'warning')
         return nil
     end
 
-    return targetPhotos[1]
+    local targetPhotos = catalog:getTargetPhotos()
+    if #targetPhotos == 0 then
+        LrDialogs.message('PPA Critique', 'Select one or more photos before running the critique.', 'warning')
+        return nil
+    end
+
+    return targetPhotos
 end
 
 function Utils.buildTemporaryExportPath(photo)

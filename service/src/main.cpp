@@ -11,7 +11,7 @@ int main() {
         const auto loaded_config = ppa::load_service_config(executable_path.parent_path());
         auto service = ppa::CritiqueService(loaded_config.config);
         auto server = httplib::Server{};
-        ppa::api::register_routes(server, service);
+        ppa::api::register_routes(server, service, loaded_config.resolved_path);
 
         constexpr auto* host = "127.0.0.1";
         constexpr auto port = 6464;

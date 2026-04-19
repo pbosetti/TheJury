@@ -1,0 +1,87 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - '*'
+
+permissions:
+  contents: read
+
+jobs:
+  build-test-package:
+    name: Build, Test, and Package (${{ matrix.label }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            label: macOS
+            asset_name: TheJury-macos-${{ github.ref_name }}.zip
+            artifact_name: release-macos
+          - os: windows-latest
+            label: Windows
+            asset_name: TheJury-windows-${{ github.ref_name }}.zip
+            artifact_name: release-windows
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up MSVC environment
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --config Release
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Install package staging tree
+        run: cmake --install build --prefix package/TheJury --component TheJuryRelease
+
+      - name: Create macOS release archive
+        if: runner.os == 'macOS'
+        run: ditto -c -k --sequesterRsrc --keepParent package/TheJury "${{ matrix.asset_name }}"
+
+      - name: Create Windows release archive
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Compress-Archive -Path package/TheJury -DestinationPath "${{ matrix.asset_name }}"
+
+      - name: Upload release archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.asset_name }}
+          if-no-files-found: error
+
+  create-release:
+    name: Create GitHub Release
+    needs: build-test-package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Download packaged artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          merge-multiple: true
+          path: release-assets
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release-assets/*.zip
+          body_path: .github/release-body.md
+          generate_release_notes: false

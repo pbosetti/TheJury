@@ -28,7 +28,9 @@ struct LoadedServiceConfig {
     bool from_file{false};
 };
 
+[[nodiscard]] ServiceConfig normalize_service_config(ServiceConfig config);
 [[nodiscard]] LoadedServiceConfig load_service_config(const std::filesystem::path& executable_directory);
+void write_service_config(const std::filesystem::path& output_path, const ServiceConfig& config);
 [[nodiscard]] std::filesystem::path current_executable_path();
 [[nodiscard]] std::vector<std::string> configured_models(const OllamaSettings& settings);
 

@@ -4,6 +4,7 @@ return {
     LrToolkitIdentifier = 'com.pbosetti.thejury',
     LrPluginName = 'The Jury',
     LrPluginInfoUrl = 'https://github.com/pbosetti/TheJury',
+    LrPluginInfoProvider = 'PluginInfoProvider.lua',
     LrInitPlugin = 'PluginInit.lua',
     LrMetadataProvider = 'MetadataDefinition.lua',
     LrLibraryMenuItems = {
@@ -16,6 +17,6 @@ return {
         major = 0,
         minor = 1,
         revision = 0,
-        build = 2,
+        build = 8,
     },
 }

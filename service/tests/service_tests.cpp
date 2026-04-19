@@ -68,8 +68,9 @@ public:
 
 class TestServer {
 public:
-    explicit TestServer(ppa::CritiqueService& service) {
-        ppa::api::register_routes(_server, service);
+    explicit TestServer(ppa::CritiqueService& service, std::filesystem::path config_path = std::filesystem::temp_directory_path() / "ppa_service.toml")
+        : _config_path(std::move(config_path)) {
+        ppa::api::register_routes(_server, service, _config_path);
         _port = _server.bind_to_any_port("127.0.0.1");
         if (_port <= 0) {
             throw std::runtime_error("failed to bind test server");
@@ -91,6 +92,7 @@ private:
     httplib::Server _server;
     int _port{0};
     std::thread _worker;
+    std::filesystem::path _config_path;
 };
 
 std::string make_chat_response(const json& semantic_json) {
@@ -197,6 +199,28 @@ TEST_CASE("invalid TOML config fails clearly") {
     CHECK_THROWS(ppa::load_service_config(temp_dir.path()));
 }
 
+TEST_CASE("service config writes TOML output") {
+    const auto temp_dir = TemporaryDirectory{};
+    const auto config_path = temp_dir.path() / "ppa_service.toml";
+
+    auto config = ppa::ServiceConfig{};
+    config.ollama.base_url = "http://127.0.0.1:22434";
+    config.ollama.model = "model-a";
+    config.ollama.fallback_model = "model-b";
+    config.ollama.timeout_ms = 30000;
+    config.semantic.default_provider = "disabled";
+
+    ppa::write_service_config(config_path, config);
+
+    const auto loaded = ppa::load_service_config(temp_dir.path());
+    CHECK(loaded.from_file);
+    CHECK(loaded.config.ollama.base_url == "http://127.0.0.1:22434");
+    CHECK(loaded.config.ollama.model == "model-a");
+    CHECK(loaded.config.ollama.fallback_model == "model-b");
+    CHECK(loaded.config.ollama.timeout_ms == 30000);
+    CHECK(loaded.config.semantic.default_provider == "disabled");
+}
+
 TEST_CASE("ollama availability probe succeeds against mocked transport") {
     auto transport = std::make_shared<MockOllamaTransport>();
     transport->get_responses.push_back(ppa::OllamaHttpResponse{.status = 200, .body = "{}", .error = ""});
@@ -280,6 +304,7 @@ TEST_CASE("aggregate stub serializes to expected shape") {
     const auto json_response = json(response);
 
     CHECK(json_response.at("aggregate").at("classification") == "C");
+    CHECK(json_response.at("aggregate").at("merit_score").get<double>() > 0.0);
     CHECK(json_response.at("aggregate").at("summary") == "stub critique response");
     CHECK(json_response.at("semantic").is_null());
 }
@@ -320,6 +345,7 @@ TEST_CASE("semantic critique returns populated response when Ollama succeeds") {
     CHECK(response.runtime.semantic_provider == "ollama");
     CHECK(response.runtime.model == "primary-model");
     CHECK(response.semantic->votes.size() == 1);
+    CHECK(response.aggregate.merit_score > 0.0);
     CHECK(response.aggregate.summary == "semantic summary");
 }
 
@@ -367,6 +393,72 @@ TEST_CASE("capabilities endpoint returns provider list") {
     CHECK(body.at("semantic").at("default_provider") == "ollama");
     CHECK(body.at("semantic").at("providers").at(0).at("name") == "disabled");
     CHECK(body.at("semantic").at("providers").at(1).at("name") == "ollama");
+}
+
+TEST_CASE("config endpoint returns live service config") {
+    const auto temp_dir = TemporaryDirectory{};
+    const auto config_path = temp_dir.path() / "ppa_service.toml";
+
+    auto config = ppa::ServiceConfig{};
+    config.ollama.model = "primary-model";
+    config.ollama.fallback_model = "fallback-model";
+
+    auto transport = std::make_shared<MockOllamaTransport>();
+    transport->get_responses.push_back(ppa::OllamaHttpResponse{
+        .status = 200,
+        .body = json{{"models", json::array({json{{"name", "installed-a"}}, json{{"name", "installed-b"}}})}}.dump(),
+        .error = "",
+    });
+
+    auto service = ppa::CritiqueService(config, ppa::OllamaClient(config.ollama, transport));
+    auto server = TestServer(service, config_path);
+    auto client = httplib::Client("127.0.0.1", server.port());
+
+    const auto response = client.Get("/v1/config");
+
+    REQUIRE(response);
+    REQUIRE(response->status == 200);
+
+    const auto body = json::parse(response->body);
+    CHECK(body.at("ollama").at("model") == "primary-model");
+    CHECK(body.at("ollama").at("fallback_model") == "fallback-model");
+    CHECK(body.at("available_models").size() == 2);
+    CHECK(body.at("path") == config_path.string());
+}
+
+TEST_CASE("config endpoint updates live service config and persists TOML") {
+    const auto temp_dir = TemporaryDirectory{};
+    const auto config_path = temp_dir.path() / "ppa_service.toml";
+
+    auto transport = std::make_shared<MockOllamaTransport>();
+    auto service = ppa::CritiqueService(ppa::ServiceConfig{}, ppa::OllamaClient(ppa::OllamaSettings{}, transport));
+    auto server = TestServer(service, config_path);
+    auto client = httplib::Client("127.0.0.1", server.port());
+
+    const auto payload = json{
+        {"ollama",
+         {{"base_url", "http://127.0.0.1:22434"},
+          {"model", "model-a"},
+          {"fallback_model", "model-b"},
+          {"timeout_ms", 45000}}},
+        {"semantic", {{"default_provider", "disabled"}}},
+    };
+
+    const auto response = client.Put("/v1/config", payload.dump(), "application/json");
+
+    REQUIRE(response);
+    REQUIRE(response->status == 200);
+
+    const auto body = json::parse(response->body);
+    CHECK(body.at("ollama").at("model") == "model-a");
+    CHECK(body.at("semantic").at("default_provider") == "disabled");
+
+    const auto loaded = ppa::load_service_config(temp_dir.path());
+    CHECK(loaded.config.ollama.base_url == "http://127.0.0.1:22434");
+    CHECK(loaded.config.ollama.model == "model-a");
+    CHECK(loaded.config.ollama.fallback_model == "model-b");
+    CHECK(loaded.config.ollama.timeout_ms == 45000);
+    CHECK(loaded.config.semantic.default_provider == "disabled");
 }
 
 TEST_CASE("critique endpoint returns error payload when semantic backend is unavailable") {

@@ -37,6 +37,17 @@ void log_critique_response(const CritiqueResponse& response) {
 void log_critique_request(const CritiqueRequest&, const nlohmann::json&) {}
 void log_critique_response(const CritiqueResponse&) {}
 #endif
+
+nlohmann::json config_payload(const CritiqueService& service,
+                             const std::filesystem::path& config_path) {
+    return nlohmann::json{
+        {"ollama", service.config().ollama},
+        {"semantic", service.config().semantic},
+        {"available_models", service.available_models()},
+        {"path", config_path.string()},
+        {"from_file", std::filesystem::exists(config_path)},
+    };
+}
 }  // namespace
 
 nlohmann::json health_payload() {
@@ -51,13 +62,31 @@ CritiqueResponse critique_payload(const CritiqueService& service, const Critique
     return service.critique(request);
 }
 
-void register_routes(httplib::Server& server, CritiqueService& service) {
+void register_routes(httplib::Server& server, CritiqueService& service, const std::filesystem::path& config_path) {
     server.Get("/health", [](const httplib::Request&, httplib::Response& response) {
         set_json(response, health_payload());
     });
 
     server.Get("/v1/capabilities", [&service](const httplib::Request&, httplib::Response& response) {
         set_json(response, nlohmann::json(capabilities_payload(service)));
+    });
+
+    server.Get("/v1/config", [&service, &config_path](const httplib::Request&, httplib::Response& response) {
+        set_json(response, config_payload(service, config_path));
+    });
+
+    server.Put("/v1/config", [&service, &config_path](const httplib::Request& request, httplib::Response& response) {
+        try {
+            auto config = nlohmann::json::parse(request.body).get<ServiceConfig>();
+            config = normalize_service_config(std::move(config));
+            write_service_config(config_path, config);
+            service.update_config(config);
+            set_json(response, config_payload(service, config_path));
+        } catch (const ApiError& error) {
+            set_json(response, nlohmann::json(ErrorResponse{.error = error.code(), .message = error.what()}), error.status());
+        } catch (const std::exception& error) {
+            set_json(response, nlohmann::json(ErrorResponse{.error = "invalid_config", .message = error.what()}), 400);
+        }
     });
 
     server.Post("/v1/critique", [&service](const httplib::Request& request, httplib::Response& response) {

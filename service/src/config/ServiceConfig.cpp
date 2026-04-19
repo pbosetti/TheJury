@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <fstream>
 #include <iostream>
 #include <stdexcept>
 
@@ -118,9 +119,41 @@ LoadedServiceConfig load_service_config(const std::filesystem::path& executable_
         }
     }
 
-    validate(loaded.config);
+    loaded.config = normalize_service_config(std::move(loaded.config));
     log_loaded_config(loaded);
     return loaded;
+}
+
+ServiceConfig normalize_service_config(ServiceConfig config) {
+    validate(config);
+    return config;
+}
+
+void write_service_config(const std::filesystem::path& output_path, const ServiceConfig& input_config) {
+    const auto config = normalize_service_config(input_config);
+
+    auto table = toml::table{};
+    table.insert_or_assign("ollama",
+                           toml::table{
+                               {"base_url", config.ollama.base_url},
+                               {"model", config.ollama.model},
+                               {"fallback_model", config.ollama.fallback_model},
+                               {"timeout_ms", config.ollama.timeout_ms},
+                           });
+    table.insert_or_assign("semantic",
+                           toml::table{
+                               {"default_provider", config.semantic.default_provider},
+                           });
+
+    auto output = std::ofstream(output_path);
+    if (!output) {
+        throw std::runtime_error("failed to open service config for writing: " + output_path.string());
+    }
+
+    output << table;
+    if (!output) {
+        throw std::runtime_error("failed to write service config: " + output_path.string());
+    }
 }
 
 std::vector<std::string> configured_models(const OllamaSettings& settings) {

@@ -8,3 +8,16 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 include(CTest)
 
 add_subdirectory(service)
+
+install(
+  DIRECTORY ${CMAKE_SOURCE_DIR}/plugin/PpaCritique.lrplugin
+  DESTINATION .
+  COMPONENT TheJuryRelease
+)
+
+install(
+  FILES
+    ${CMAKE_SOURCE_DIR}/INSTALL.md
+  DESTINATION .
+  COMPONENT TheJuryRelease
+)

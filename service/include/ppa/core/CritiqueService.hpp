@@ -17,9 +17,19 @@ public:
     explicit CritiqueService(ServiceConfig config)
         : CritiqueService(config, OllamaClient{config.ollama}) {}
     CritiqueService(ServiceConfig config, OllamaClient client)
-        : _config(std::move(config)),
+        : _config(normalize_service_config(std::move(config))),
           _ollama_client(std::move(client)),
           _semantic_factory(_ollama_client) {}
+
+    [[nodiscard]] const ServiceConfig& config() const { return _config; }
+
+    void update_config(ServiceConfig config) {
+        _config = normalize_service_config(std::move(config));
+        _ollama_client = OllamaClient{_config.ollama};
+        _semantic_factory = SemanticProviderFactory{_ollama_client};
+    }
+
+    [[nodiscard]] std::vector<std::string> available_models() const { return _ollama_client.available_models(); }
 
     [[nodiscard]] CapabilitiesResponse capabilities() const {
         return CapabilitiesResponse{

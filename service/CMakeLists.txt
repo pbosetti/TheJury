@@ -62,6 +62,18 @@ add_executable(ppa_service
 
 target_link_libraries(ppa_service PRIVATE ppa_service_lib)
 
+install(
+  TARGETS ppa_service
+  RUNTIME DESTINATION .
+  COMPONENT TheJuryRelease
+)
+
+install(
+  FILES ${CMAKE_CURRENT_BINARY_DIR}/ppa_service.toml
+  DESTINATION .
+  COMPONENT TheJuryRelease
+)
+
 if(BUILD_TESTING)
   add_executable(ppa_service_tests
     tests/service_tests.cpp

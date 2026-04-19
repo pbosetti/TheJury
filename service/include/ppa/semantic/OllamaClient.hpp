@@ -28,6 +28,7 @@ public:
     OllamaClient(OllamaSettings settings, std::shared_ptr<OllamaTransport> transport);
 
     [[nodiscard]] std::vector<std::string> configured_models() const;
+    [[nodiscard]] std::vector<std::string> available_models() const;
     [[nodiscard]] std::string default_model() const;
     [[nodiscard]] bool is_available() const;
     [[nodiscard]] SemanticOutput evaluate(const std::string& prompt, const std::string& image_path) const;

@@ -1,10 +1,11 @@
 local LrHttp = import 'LrHttp'
+local LrPrefs = import 'LrPrefs'
 local LrStringUtils = import 'LrStringUtils'
 
 local Json = require 'Json'
 
 local ServiceClient = {
-    host = 'http://127.0.0.1:6464',
+    defaultHost = 'http://127.0.0.1:6464',
 }
 
 local function encodeJson(payload)
@@ -62,8 +63,39 @@ local function describeHeaders(headers)
     return table.concat(parts, ', ')
 end
 
+local function getHost()
+    local prefs = LrPrefs.prefsForPlugin()
+    return prefs.serviceHost or ServiceClient.defaultHost
+end
+
 function ServiceClient.getCapabilities()
-    local body, headers = LrHttp.get(ServiceClient.host .. '/v1/capabilities')
+    local body, headers = LrHttp.get(getHost() .. '/v1/capabilities')
+    if body == nil then
+        return nil, describeHeaders(headers) or 'local service request failed', headers
+    end
+    local decoded, err = decodeJson(body)
+    if decoded and decoded.error then
+        return nil, decoded.message or decoded.error, headers
+    end
+    return decoded, err, headers
+end
+
+function ServiceClient.getConfig()
+    local body, headers = LrHttp.get(getHost() .. '/v1/config')
+    if body == nil then
+        return nil, describeHeaders(headers) or 'local service request failed', headers
+    end
+    local decoded, err = decodeJson(body)
+    if decoded and decoded.error then
+        return nil, decoded.message or decoded.error, headers
+    end
+    return decoded, err, headers
+end
+
+function ServiceClient.updateConfig(payload)
+    local body, headers = LrHttp.post(getHost() .. '/v1/config', encodeJson(payload), {
+        { field = 'Content-Type', value = 'application/json' },
+    }, 'PUT')
     if body == nil then
         return nil, describeHeaders(headers) or 'local service request failed', headers
     end
@@ -75,7 +107,7 @@ function ServiceClient.getCapabilities()
 end
 
 function ServiceClient.submitCritique(payload)
-    local body, headers = LrHttp.post(ServiceClient.host .. '/v1/critique', encodeJson(payload), {
+    local body, headers = LrHttp.post(getHost() .. '/v1/critique', encodeJson(payload), {
         { field = 'Content-Type', value = 'application/json' },
     })
     if body == nil then

@@ -203,6 +203,10 @@ std::vector<std::string> OllamaClient::configured_models() const {
     return ppa::configured_models(_settings);
 }
 
+std::vector<std::string> OllamaClient::available_models() const {
+    return installed_models(*_transport);
+}
+
 std::string OllamaClient::default_model() const {
     return configured_models().front();
 }

@@ -2,6 +2,7 @@ return {
     { id = 'ppaCritiqueStatus', title = 'PPA Critique Status', dataType = 'string' },
     { id = 'ppaCritiqueCategory', title = 'PPA Critique Category', dataType = 'string' },
     { id = 'ppaCritiqueClassification', title = 'PPA Critique Classification', dataType = 'string' },
+    { id = 'ppaCritiqueMeritScore', title = 'PPA Critique Merit Score', dataType = 'string' },
     { id = 'ppaCritiqueMeritProbability', title = 'PPA Critique Merit Probability', dataType = 'string' },
     { id = 'ppaCritiqueConfidence', title = 'PPA Critique Confidence', dataType = 'string' },
     { id = 'ppaCritiqueSemanticSummary', title = 'PPA Critique Semantic Summary', dataType = 'string' },
