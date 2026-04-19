@@ -20,6 +20,7 @@ local MetadataFields = {
     { id = 'ppaCritiqueConfidence', title = 'PPA Critique Confidence', dataType = 'string' },
     { id = 'ppaCritiqueSemanticSummary', title = 'PPA Critique Semantic Summary', dataType = 'string' },
     { id = 'ppaCritiqueSemanticVote', title = 'PPA Critique Semantic Vote', dataType = 'string' },
+    { id = 'ppaCritiqueSemanticVotes', title = 'PPA Critique Semantic Votes', dataType = 'string' },
     { id = 'ppaCritiqueSemanticVoteConfidence', title = 'PPA Critique Semantic Vote Confidence', dataType = 'string' },
     { id = 'ppaCritiqueSemanticRationale', title = 'PPA Critique Semantic Rationale', dataType = 'string' },
     { id = 'ppaCritiqueSemanticStrengths', title = 'PPA Critique Semantic Strengths', dataType = 'string' },
@@ -46,6 +47,34 @@ local function pluginPrefs()
     return LrPrefs.prefsForPlugin()
 end
 
+local function parseJurorSubset(value)
+    value = type(value) == 'string' and value:match('^%s*(.-)%s*$') or ''
+    if value == '' then
+        return {}
+    end
+
+    local subset = {}
+    local seen = {}
+    for entry in string.gmatch(value, '[^,]+') do
+        local trimmed = entry:match('^%s*(.-)%s*$')
+        if trimmed == nil or trimmed == '' or not trimmed:match('^%d+$') then
+            return nil
+        end
+
+        local index = tonumber(trimmed)
+        if index == nil or index <= 0 then
+            return nil
+        end
+
+        if not seen[index] then
+            seen[index] = true
+            subset[#subset + 1] = index
+        end
+    end
+
+    return subset
+end
+
 local function joinList(values)
     if values == nil or #values == 0 then
         return ''
@@ -54,9 +83,76 @@ local function joinList(values)
     return table.concat(values, ', ')
 end
 
+local function averageVoteConfidence(votes)
+    if votes == nil or #votes == 0 then
+        return ''
+    end
+
+    local total = 0
+    for _, vote in ipairs(votes) do
+        total = total + (tonumber(vote.confidence) or 0)
+    end
+
+    return tostring(total / #votes)
+end
+
+local function panelConsensus(votes)
+    if votes == nil or #votes == 0 then
+        return ''
+    end
+
+    local cVotes = 0
+    local dVotes = 0
+    for _, vote in ipairs(votes) do
+        if vote.vote == 'C' then
+            cVotes = cVotes + 1
+        elseif vote.vote == 'D' then
+            dVotes = dVotes + 1
+        end
+    end
+
+    if cVotes == dVotes then
+        return string.format('Split (%d C / %d D)', cVotes, dVotes)
+    end
+
+    local winner = cVotes > dVotes and 'C' or 'D'
+    return string.format('%s (%d C / %d D)', winner, cVotes, dVotes)
+end
+
+local function summarizeVotes(votes)
+    if votes == nil or #votes == 0 then
+        return ''
+    end
+
+    local parts = {}
+    for _, vote in ipairs(votes) do
+        parts[#parts + 1] = string.format(
+            '%s:%s@%s',
+            vote.judge_id or 'judge',
+            vote.vote or 'n/a',
+            tostring(vote.confidence or 'n/a')
+        )
+    end
+
+    return table.concat(parts, '; ')
+end
+
+local function summarizeRationales(votes)
+    if votes == nil or #votes == 0 then
+        return ''
+    end
+
+    local parts = {}
+    for _, vote in ipairs(votes) do
+        parts[#parts + 1] = string.format('%s: %s', vote.judge_id or 'judge', vote.rationale or '')
+    end
+
+    return table.concat(parts, ' | ')
+end
+
 local function buildMetadataValues(request, response)
     local semantic = response.semantic or {}
-    local firstVote = semantic.votes and semantic.votes[1] or {}
+    local votes = semantic.votes or {}
 
     return {
         ppaCritiqueStatus = response.preflight and response.preflight.status or 'unknown',
@@ -66,9 +162,10 @@ local function buildMetadataValues(request, response)
         ppaCritiqueMeritProbability = tostring(response.aggregate and response.aggregate.merit_probability or ''),
         ppaCritiqueConfidence = tostring(response.aggregate and response.aggregate.confidence or ''),
         ppaCritiqueSemanticSummary = semantic.summary or '',
-        ppaCritiqueSemanticVote = firstVote.vote or '',
-        ppaCritiqueSemanticVoteConfidence = tostring(firstVote.confidence or ''),
-        ppaCritiqueSemanticRationale = firstVote.rationale or '',
+        ppaCritiqueSemanticVote = panelConsensus(votes),
+        ppaCritiqueSemanticVotes = summarizeVotes(votes),
+        ppaCritiqueSemanticVoteConfidence = averageVoteConfidence(votes),
+        ppaCritiqueSemanticRationale = summarizeRationales(votes),
         ppaCritiqueSemanticStrengths = joinList(semantic.strengths),
         ppaCritiqueSemanticImprovements = joinList(semantic.improvements),
         ppaCritiqueLastAnalyzedAt = Utils.currentTimestamp(),
@@ -172,6 +269,7 @@ end
 local function buildRequest(photo, exportPath, runSemantic, category)
     local fileName = photo:getFormattedMetadata('fileName') or 'photo.jpg'
     local requestMetadata = Utils.collectRequestMetadata(photo)
+    local selectedJurors = parseJurorSubset(pluginPrefs().defaultJurorSubset)
 
     return {
         image = {
@@ -187,6 +285,7 @@ local function buildRequest(photo, exportPath, runSemantic, category)
             run_preflight = true,
             run_semantic = runSemantic,
             semantic_provider = runSemantic and 'ollama' or 'disabled',
+            selected_jurors = selectedJurors or {},
         },
         metadata = requestMetadata,
     }
@@ -282,6 +381,15 @@ end
 LrFunctionContext.postAsyncTaskWithContext('PPA Critique', function(context)
     local photos = Utils.getSelectedPhotos()
     if not photos then
+        return
+    end
+
+    if parseJurorSubset(pluginPrefs().defaultJurorSubset) == nil then
+        LrDialogs.message(
+            'PPA Critique',
+            'The Juror subset setting is invalid. Use a comma-separated list of juror numbers such as 1,3, 2.',
+            'warning'
+        )
         return
     end
 

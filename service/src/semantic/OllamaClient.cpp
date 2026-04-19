@@ -101,7 +101,6 @@ nlohmann::json output_schema() {
              {"votes",
               {{"type", "array"},
                {"minItems", 1},
-               {"maxItems", 1},
                {"items",
                 {{"type", "object"},
                  {"properties",
@@ -175,11 +174,13 @@ SemanticResult parse_semantic_result(const std::string& body) {
     try {
         auto semantic_json = nlohmann::json::parse(response_json.at("message").at("content").get<std::string>());
         auto semantic = semantic_json.get<SemanticResult>();
-        if (semantic.votes.size() != 1) {
-            throw api::ApiError(502, "semantic_invalid_response", "Ollama response must contain exactly one judge vote");
+        if (semantic.votes.empty()) {
+            throw api::ApiError(502, "semantic_invalid_response", "Ollama response must contain at least one judge vote");
         }
-        if (semantic.votes.front().vote != "C" && semantic.votes.front().vote != "D") {
-            throw api::ApiError(502, "semantic_invalid_response", "Ollama vote must be C or D");
+        for (const auto& vote : semantic.votes) {
+            if (vote.vote != "C" && vote.vote != "D") {
+                throw api::ApiError(502, "semantic_invalid_response", "Ollama vote must be C or D");
+            }
         }
         return semantic;
     } catch (const api::ApiError&) {

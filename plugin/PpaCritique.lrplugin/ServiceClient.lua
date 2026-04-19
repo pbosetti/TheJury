@@ -6,6 +6,7 @@ local Json = require 'Json'
 
 local ServiceClient = {
     defaultHost = 'http://127.0.0.1:6464',
+    defaultTimeoutSeconds = 300,
 }
 
 local function encodeJson(payload)
@@ -68,8 +69,17 @@ local function getHost()
     return prefs.serviceHost or ServiceClient.defaultHost
 end
 
+local function getTimeoutSeconds()
+    local prefs = LrPrefs.prefsForPlugin()
+    local timeout = tonumber(prefs.serviceTimeoutSeconds)
+    if timeout == nil or timeout <= 0 then
+        return ServiceClient.defaultTimeoutSeconds
+    end
+    return timeout
+end
+
 function ServiceClient.getCapabilities()
-    local body, headers = LrHttp.get(getHost() .. '/v1/capabilities')
+    local body, headers = LrHttp.get(getHost() .. '/v1/capabilities', nil, getTimeoutSeconds())
     if body == nil then
         return nil, describeHeaders(headers) or 'local service request failed', headers
     end
@@ -81,7 +91,7 @@ function ServiceClient.getCapabilities()
 end
 
 function ServiceClient.getConfig()
-    local body, headers = LrHttp.get(getHost() .. '/v1/config')
+    local body, headers = LrHttp.get(getHost() .. '/v1/config', nil, getTimeoutSeconds())
     if body == nil then
         return nil, describeHeaders(headers) or 'local service request failed', headers
     end
@@ -95,7 +105,7 @@ end
 function ServiceClient.updateConfig(payload)
     local body, headers = LrHttp.post(getHost() .. '/v1/config', encodeJson(payload), {
         { field = 'Content-Type', value = 'application/json' },
-    }, 'PUT')
+    }, 'PUT', getTimeoutSeconds())
     if body == nil then
         return nil, describeHeaders(headers) or 'local service request failed', headers
     end
@@ -109,7 +119,7 @@ end
 function ServiceClient.submitCritique(payload)
     local body, headers = LrHttp.post(getHost() .. '/v1/critique', encodeJson(payload), {
         { field = 'Content-Type', value = 'application/json' },
-    })
+    }, 'POST', getTimeoutSeconds())
     if body == nil then
         return nil, describeHeaders(headers) or 'local service request failed', headers
     end

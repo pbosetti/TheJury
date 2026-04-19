@@ -10,6 +10,7 @@ local bind = LrView.bind
 local PluginInfoProvider = {}
 
 local DefaultServiceHost = ServiceClient.defaultHost or 'http://127.0.0.1:6464'
+local DefaultServiceTimeoutSeconds = tostring(ServiceClient.defaultTimeoutSeconds or 300)
 
 local CategoryOptions = {
     { title = 'Portrait', value = 'Portrait' },
@@ -88,11 +89,41 @@ local function uniqueModelItems(availableModels, currentModel, fallbackModel)
     return items
 end
 
+local function parseJurorSubset(value)
+    value = trim(value) or ''
+    if value == '' then
+        return {}
+    end
+
+    local subset = {}
+    local seen = {}
+    for entry in string.gmatch(value, '[^,]+') do
+        local trimmed = trim(entry)
+        if trimmed == nil or trimmed == '' or not trimmed:match('^%d+$') then
+            return nil
+        end
+
+        local index = tonumber(trimmed)
+        if index == nil or index <= 0 then
+            return nil
+        end
+
+        if not seen[index] then
+            seen[index] = true
+            subset[#subset + 1] = index
+        end
+    end
+
+    return subset
+end
+
 local function applyPrefs(propertyTable)
     local prefs = LrPrefs.prefsForPlugin()
     propertyTable.serviceHost = valueOrDefault(prefs.serviceHost, DefaultServiceHost)
+    propertyTable.serviceTimeoutSeconds = valueOrDefault(prefs.serviceTimeoutSeconds, DefaultServiceTimeoutSeconds)
     propertyTable.defaultSemanticMode = valueOrDefault(prefs.defaultSemanticMode, 'ask')
     propertyTable.defaultCategory = valueOrDefault(prefs.defaultCategory, 'Illustrative')
+    propertyTable.defaultJurorSubset = valueOrDefault(prefs.defaultJurorSubset, '')
 
     if not containsOption(SemanticModeOptions, propertyTable.defaultSemanticMode) then
         propertyTable.defaultSemanticMode = 'ask'
@@ -105,14 +136,17 @@ end
 local function persistPrefs(propertyTable)
     local prefs = LrPrefs.prefsForPlugin()
     prefs.serviceHost = valueOrDefault(propertyTable.serviceHost, DefaultServiceHost)
+    prefs.serviceTimeoutSeconds = valueOrDefault(propertyTable.serviceTimeoutSeconds, DefaultServiceTimeoutSeconds)
     prefs.defaultSemanticMode = valueOrDefault(propertyTable.defaultSemanticMode, 'ask')
     prefs.defaultCategory = valueOrDefault(propertyTable.defaultCategory, 'Illustrative')
+    prefs.defaultJurorSubset = valueOrDefault(propertyTable.defaultJurorSubset, '')
 end
 
 local function applyServiceConfig(propertyTable, payload)
     local ollama = payload.ollama or {}
     local semantic = payload.semantic or {}
     local availableModels = payload.available_models or {}
+    local jurors = payload.jurors or {}
 
     propertyTable.ollamaBaseUrl = valueOrDefault(ollama.base_url, 'http://127.0.0.1:11434')
     propertyTable.ollamaTimeoutMs = tostring(ollama.timeout_ms or 120000)
@@ -123,6 +157,7 @@ local function applyServiceConfig(propertyTable, payload)
     propertyTable.availableModelsText = #availableModels > 0 and table.concat(availableModels, ', ') or 'No models reported by service'
     propertyTable.serviceConfigPath = payload.path or ''
     propertyTable.serviceConfigOrigin = payload.from_file and 'Loaded from TOML file' or 'Using defaults in memory'
+    propertyTable.jurorSummary = #jurors > 0 and (tostring(#jurors) .. ' jurors configured in service TOML') or 'No jurors configured'
 end
 
 local function refreshFromService(propertyTable)
@@ -139,8 +174,18 @@ end
 
 local function saveToService(propertyTable)
     local timeoutMs = tonumber(propertyTable.ollamaTimeoutMs)
+    local serviceTimeoutSeconds = tonumber(propertyTable.serviceTimeoutSeconds)
+    local jurorSubset = parseJurorSubset(propertyTable.defaultJurorSubset)
     if timeoutMs == nil or timeoutMs <= 0 then
         propertyTable.statusText = 'Timeout must be a positive integer.'
+        return
+    end
+    if serviceTimeoutSeconds == nil or serviceTimeoutSeconds <= 0 then
+        propertyTable.statusText = 'HTTP timeout must be a positive integer number of seconds.'
+        return
+    end
+    if jurorSubset == nil then
+        propertyTable.statusText = 'Juror subset must be empty or a comma-separated list like 1,3, 2.'
         return
     end
 
@@ -180,6 +225,7 @@ function PluginInfoProvider.startDialog(propertyTable)
     propertyTable.availableModelsText = 'Refresh to query the local service'
     propertyTable.serviceConfigPath = ''
     propertyTable.serviceConfigOrigin = ''
+    propertyTable.jurorSummary = ''
     propertyTable.statusText = 'Ready.'
 
     LrTasks.startAsyncTask(function()
@@ -201,6 +247,11 @@ function PluginInfoProvider.sectionsForTopOfDialog(f, propertyTable)
             }),
             f:row({
                 spacing = f:label_spacing(),
+                f:static_text({ title = 'HTTP timeout (s)', width = 120, alignment = 'right' }),
+                f:edit_field({ value = bind('serviceTimeoutSeconds'), width_in_chars = 10 }),
+            }),
+            f:row({
+                spacing = f:label_spacing(),
                 f:static_text({ title = 'Default semantic mode', width = 120, alignment = 'right' }),
                 f:popup_menu({ value = bind('defaultSemanticMode'), items = SemanticModeOptions }),
             }),
@@ -208,6 +259,16 @@ function PluginInfoProvider.sectionsForTopOfDialog(f, propertyTable)
                 spacing = f:label_spacing(),
                 f:static_text({ title = 'Default category', width = 120, alignment = 'right' }),
                 f:popup_menu({ value = bind('defaultCategory'), items = CategoryOptions }),
+            }),
+            f:row({
+                spacing = f:label_spacing(),
+                f:static_text({ title = 'Juror subset', width = 120, alignment = 'right' }),
+                f:edit_field({ value = bind('defaultJurorSubset'), width_in_chars = 20 }),
+            }),
+            f:row({
+                spacing = f:label_spacing(),
+                f:static_text({ title = '', width = 120 }),
+                f:static_text({ title = 'Blank uses all jurors. Example: 1,3, 2', width_in_chars = 45 }),
             }),
             f:row({
                 spacing = f:control_spacing(),
@@ -265,6 +326,11 @@ function PluginInfoProvider.sectionsForTopOfDialog(f, propertyTable)
                 spacing = f:label_spacing(),
                 f:static_text({ title = 'Config source', width = 120, alignment = 'right' }),
                 f:static_text({ title = bind('serviceConfigOrigin'), width_in_chars = 50 }),
+            }),
+            f:row({
+                spacing = f:label_spacing(),
+                f:static_text({ title = 'Juror panel', width = 120, alignment = 'right' }),
+                f:static_text({ title = bind('jurorSummary'), width_in_chars = 50 }),
             }),
             f:row({
                 spacing = f:control_spacing(),

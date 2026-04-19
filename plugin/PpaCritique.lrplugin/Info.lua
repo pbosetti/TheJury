@@ -17,6 +17,6 @@ return {
         major = 0,
         minor = 1,
         revision = 0,
-        build = 8,
+        build = 11,
     },
 }

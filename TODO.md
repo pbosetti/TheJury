@@ -15,7 +15,7 @@ All items below are technically doable. The main differences are implementation 
 3. `[DONE] Allow multiple photo selection`
 4. `[DONE] Plugin settings`
 5. `[DONE] Support higher resolution merit index`
-6. `Use multiple jurors`
+6. `[DONE] Use multiple jurors`
 7. `macOS: make the service a menu bar app`
 8. `Windows: make the service a tray area element`
 
@@ -145,9 +145,9 @@ Technical notes:
 - The main risk is scoring semantics, not implementation complexity.
 - Start with one stable numeric index before adding multiple sub-scores.
 
-## 6. Use multiple jurors
+## 6. [DONE] Use multiple jurors
 
-Status: `Doable`, but higher risk and noticeably more design work.
+Status: `Done`.
 
 Why sixth:
 - The current semantic model and metadata schema assume one semantic summary and effectively one vote.

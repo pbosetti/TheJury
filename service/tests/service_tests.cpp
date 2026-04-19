@@ -3,6 +3,7 @@
 #include <fstream>
 #include <memory>
 #include <thread>
+#include <tuple>
 #include <vector>
 
 #include <catch2/catch_test_macros.hpp>
@@ -104,6 +105,31 @@ std::string make_chat_response(const json& semantic_json) {
         .dump();
 }
 
+std::vector<ppa::JurorDefinition> make_jurors(std::initializer_list<const char*> ids) {
+    auto jurors = std::vector<ppa::JurorDefinition>{};
+    for (const auto* id : ids) {
+        jurors.push_back(ppa::JurorDefinition{
+            .judge_id = id,
+            .personality = std::string("Personality for ") + id,
+            .weight = 1.0,
+        });
+    }
+    return jurors;
+}
+
+json make_panel_votes(std::initializer_list<std::tuple<const char*, const char*, double, const char*>> votes) {
+    auto result = json::array();
+    for (const auto& [judge_id, vote, confidence, rationale] : votes) {
+        result.push_back(json{
+            {"judge_id", judge_id},
+            {"vote", vote},
+            {"confidence", confidence},
+            {"rationale", rationale},
+        });
+    }
+    return result;
+}
+
 ppa::CritiqueRequest semantic_request() {
     return ppa::CritiqueRequest{
         .image = ppa::ImageInput{.path = "/tmp/photo.jpg"},
@@ -132,7 +158,8 @@ TEST_CASE("critique requests deserialize from json") {
         "options": {
             "run_preflight": true,
             "run_semantic": false,
-            "semantic_provider": "disabled"
+            "semantic_provider": "disabled",
+            "selected_jurors": [1, 3, 2]
         },
         "metadata": {
             "width": 3840,
@@ -152,6 +179,7 @@ TEST_CASE("critique requests deserialize from json") {
     CHECK(request.image.path == "/tmp/ppa-critique/photo-001.jpg");
     CHECK(request.photo.id == "lr-photo-001");
     CHECK(request.options.semantic_provider == "disabled");
+    CHECK(request.options.selected_jurors == std::vector<int>{1, 3, 2});
     CHECK(request.metadata.original_path == "/photos/library/photo-001.cr3");
     CHECK(request.metadata.rating == 4);
     CHECK(request.metadata.keywords == std::vector<std::string>{"portrait"});
@@ -167,6 +195,7 @@ TEST_CASE("service config defaults apply when config file is missing") {
     CHECK(loaded.config.ollama.fallback_model == "qwen2.5vl:3b");
     CHECK(loaded.config.ollama.timeout_ms == 120000);
     CHECK(loaded.config.semantic.default_provider == "ollama");
+    CHECK(loaded.config.jurors.size() == 5);
 }
 
 TEST_CASE("service config overrides defaults from TOML") {
@@ -179,6 +208,10 @@ TEST_CASE("service config overrides defaults from TOML") {
     output << "timeout_ms = 30000\n";
     output << "[semantic]\n";
     output << "default_provider = \"disabled\"\n";
+    output << "[[jurors]]\n";
+    output << "judge_id = \"JX\"\n";
+    output << "personality = \"Custom juror\"\n";
+    output << "weight = 2.5\n";
     output.close();
 
     const auto loaded = ppa::load_service_config(temp_dir.path());
@@ -188,6 +221,9 @@ TEST_CASE("service config overrides defaults from TOML") {
     CHECK(loaded.config.ollama.fallback_model == "model-b");
     CHECK(loaded.config.ollama.timeout_ms == 30000);
     CHECK(loaded.config.semantic.default_provider == "disabled");
+    REQUIRE(loaded.config.jurors.size() == 1);
+    CHECK(loaded.config.jurors[0].judge_id == "JX");
+    CHECK(loaded.config.jurors[0].weight == 2.5);
 }
 
 TEST_CASE("invalid TOML config fails clearly") {
@@ -209,6 +245,8 @@ TEST_CASE("service config writes TOML output") {
     config.ollama.fallback_model = "model-b";
     config.ollama.timeout_ms = 30000;
     config.semantic.default_provider = "disabled";
+    config.jurors = make_jurors({"JA", "JB"});
+    config.jurors[0].weight = 1.5;
 
     ppa::write_service_config(config_path, config);
 
@@ -219,6 +257,9 @@ TEST_CASE("service config writes TOML output") {
     CHECK(loaded.config.ollama.fallback_model == "model-b");
     CHECK(loaded.config.ollama.timeout_ms == 30000);
     CHECK(loaded.config.semantic.default_provider == "disabled");
+    REQUIRE(loaded.config.jurors.size() == 2);
+    CHECK(loaded.config.jurors[0].judge_id == "JA");
+    CHECK(loaded.config.jurors[0].weight == 1.5);
 }
 
 TEST_CASE("ollama availability probe succeeds against mocked transport") {
@@ -243,11 +284,10 @@ TEST_CASE("ollama client evaluates image request and falls back to secondary mod
         ppa::OllamaHttpResponse{.status = 200,
                                 .body = make_chat_response(json{
                                     {"summary", "semantic summary"},
-                                    {"votes",
-                                     json::array({json{{"judge_id", "J1"},
-                                                       {"vote", "C"},
-                                                       {"confidence", 0.7},
-                                                       {"rationale", "Strong composition."}}})},
+                                    {"votes", make_panel_votes({
+                                        {"J1", "C", 0.7, "Strong composition."},
+                                        {"J2", "D", 0.4, "Weak impact."},
+                                    })},
                                     {"strengths", json::array({"Impact"})},
                                     {"improvements", json::array({"Refine crop"})},
                                 }),
@@ -261,7 +301,7 @@ TEST_CASE("ollama client evaluates image request and falls back to secondary mod
     const auto output = client.evaluate("Prompt text", image_path.string());
     CHECK(output.model == "secondary-model");
     CHECK(output.result.summary == "semantic summary");
-    CHECK(output.result.votes.size() == 1);
+    CHECK(output.result.votes.size() == 2);
 
     const auto request_json = json::parse(transport->last_post_body);
     CHECK(transport->last_post_path == "/api/chat");
@@ -321,11 +361,11 @@ TEST_CASE("semantic critique returns populated response when Ollama succeeds") {
         ppa::OllamaHttpResponse{.status = 200,
                                 .body = make_chat_response(json{
                                     {"summary", "semantic summary"},
-                                    {"votes",
-                                     json::array({json{{"judge_id", "J1"},
-                                                       {"vote", "C"},
-                                                       {"confidence", 0.7},
-                                                       {"rationale", "Strong composition."}}})},
+                                    {"votes", make_panel_votes({
+                                        {"J1", "C", 0.7, "Strong composition."},
+                                        {"J2", "C", 0.8, "Good impact."},
+                                        {"J3", "D", 0.5, "Needs refinement."},
+                                    })},
                                     {"strengths", json::array({"Impact"})},
                                     {"improvements", json::array({"Refine crop"})},
                                 }),
@@ -334,6 +374,7 @@ TEST_CASE("semantic critique returns populated response when Ollama succeeds") {
     auto config = ppa::ServiceConfig{};
     config.ollama.model = "primary-model";
     config.ollama.fallback_model = "secondary-model";
+    config.jurors = make_jurors({"J1", "J2", "J3"});
 
     auto request = semantic_request();
     request.image.path = image_path.string();
@@ -344,9 +385,71 @@ TEST_CASE("semantic critique returns populated response when Ollama succeeds") {
     REQUIRE(response.semantic.has_value());
     CHECK(response.runtime.semantic_provider == "ollama");
     CHECK(response.runtime.model == "primary-model");
-    CHECK(response.semantic->votes.size() == 1);
+    CHECK(response.semantic->votes.size() == 3);
+    CHECK(response.aggregate.classification == "C");
     CHECK(response.aggregate.merit_score > 0.0);
     CHECK(response.aggregate.summary == "semantic summary");
+}
+
+TEST_CASE("semantic critique honors selected juror subset and order") {
+    const auto temp_dir = TemporaryDirectory{};
+    const auto image_path = temp_dir.path() / "photo.jpg";
+    auto image = std::ofstream(image_path, std::ios::binary);
+    image << "jpeg-bytes";
+    image.close();
+
+    auto transport = std::make_shared<MockOllamaTransport>();
+    transport->post_responses.push_back(
+        ppa::OllamaHttpResponse{.status = 200,
+                                .body = make_chat_response(json{
+                                    {"summary", "subset semantic summary"},
+                                    {"votes", make_panel_votes({
+                                        {"J1", "C", 0.7, "Juror one rationale."},
+                                        {"J3", "D", 0.8, "Juror three rationale."},
+                                        {"J2", "C", 0.6, "Juror two rationale."},
+                                    })},
+                                    {"strengths", json::array({"Impact"})},
+                                    {"improvements", json::array({"Refine crop"})},
+                                }),
+                                .error = ""});
+
+    auto config = ppa::ServiceConfig{};
+    config.ollama.model = "primary-model";
+    config.ollama.fallback_model = "secondary-model";
+    config.jurors = make_jurors({"J1", "J2", "J3"});
+
+    auto request = semantic_request();
+    request.image.path = image_path.string();
+    request.options.selected_jurors = {1, 3, 2};
+
+    auto service = ppa::CritiqueService(config, ppa::OllamaClient(config.ollama, transport));
+    const auto response = ppa::api::critique_payload(service, request);
+
+    REQUIRE(response.semantic.has_value());
+    REQUIRE(response.semantic->votes.size() == 3);
+    CHECK(response.semantic->votes[0].judge_id == "J1");
+    CHECK(response.semantic->votes[1].judge_id == "J3");
+    CHECK(response.semantic->votes[2].judge_id == "J2");
+    CHECK(response.aggregate.summary == "subset semantic summary");
+}
+
+TEST_CASE("semantic critique rejects out-of-range selected jurors") {
+    auto config = ppa::ServiceConfig{};
+    config.jurors = make_jurors({"J1", "J2", "J3"});
+
+    auto request = semantic_request();
+    request.options.selected_jurors = {4};
+
+    auto service = ppa::CritiqueService(config);
+
+    try {
+        (void)ppa::api::critique_payload(service, request);
+        FAIL("expected invalid_request ApiError");
+    } catch (const ppa::api::ApiError& error) {
+        CHECK(error.status() == 400);
+        CHECK(error.code() == "invalid_request");
+        CHECK(std::string(error.what()).find("selected_jurors") != std::string::npos);
+    }
 }
 
 TEST_CASE("semantic critique throws when Ollama is unavailable") {
@@ -402,6 +505,7 @@ TEST_CASE("config endpoint returns live service config") {
     auto config = ppa::ServiceConfig{};
     config.ollama.model = "primary-model";
     config.ollama.fallback_model = "fallback-model";
+    config.jurors = make_jurors({"JA", "JB"});
 
     auto transport = std::make_shared<MockOllamaTransport>();
     transport->get_responses.push_back(ppa::OllamaHttpResponse{
@@ -422,6 +526,8 @@ TEST_CASE("config endpoint returns live service config") {
     const auto body = json::parse(response->body);
     CHECK(body.at("ollama").at("model") == "primary-model");
     CHECK(body.at("ollama").at("fallback_model") == "fallback-model");
+    REQUIRE(body.at("jurors").size() == 2);
+    CHECK(body.at("jurors").at(0).at("judge_id") == "JA");
     CHECK(body.at("available_models").size() == 2);
     CHECK(body.at("path") == config_path.string());
 }
@@ -431,7 +537,9 @@ TEST_CASE("config endpoint updates live service config and persists TOML") {
     const auto config_path = temp_dir.path() / "ppa_service.toml";
 
     auto transport = std::make_shared<MockOllamaTransport>();
-    auto service = ppa::CritiqueService(ppa::ServiceConfig{}, ppa::OllamaClient(ppa::OllamaSettings{}, transport));
+    auto initialConfig = ppa::ServiceConfig{};
+    initialConfig.jurors = make_jurors({"JX"});
+    auto service = ppa::CritiqueService(initialConfig, ppa::OllamaClient(ppa::OllamaSettings{}, transport));
     auto server = TestServer(service, config_path);
     auto client = httplib::Client("127.0.0.1", server.port());
 
@@ -459,6 +567,8 @@ TEST_CASE("config endpoint updates live service config and persists TOML") {
     CHECK(loaded.config.ollama.fallback_model == "model-b");
     CHECK(loaded.config.ollama.timeout_ms == 45000);
     CHECK(loaded.config.semantic.default_provider == "disabled");
+    REQUIRE(loaded.config.jurors.size() == 1);
+    CHECK(loaded.config.jurors[0].judge_id == "JX");
 }
 
 TEST_CASE("critique endpoint returns error payload when semantic backend is unavailable") {

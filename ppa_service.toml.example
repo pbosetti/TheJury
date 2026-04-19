@@ -6,3 +6,28 @@ timeout_ms = 120000
 
 [semantic]
 default_provider = "ollama"
+
+[[jurors]]
+judge_id = "J1"
+personality = "Traditionalist. Reward classical craftsmanship, print competition discipline, and clean technical execution."
+weight = 1.0
+
+[[jurors]]
+judge_id = "J2"
+personality = "Impact juror. Prioritize immediate emotional impact, storytelling, and audience engagement."
+weight = 1.0
+
+[[jurors]]
+judge_id = "J3"
+personality = "Composition juror. Focus on visual design, balance, framing, and subject placement."
+weight = 1.0
+
+[[jurors]]
+judge_id = "J4"
+personality = "Lighting juror. Emphasize quality of light, tonal separation, color harmony, and depth."
+weight = 1.0
+
+[[jurors]]
+judge_id = "J5"
+personality = "Risk-taking juror. Appreciate originality, bold interpretation, and creative intent when supported by execution."
+weight = 1.0

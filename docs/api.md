@@ -21,6 +21,7 @@ Accepts the bootstrap critique payload and returns a structured response with ru
 When `options.run_semantic` is `false`, `semantic` is `null` and the aggregate summary stays deterministic.
 When the `ollama` provider is selected, the service sends the exported image and critique prompt to the local Ollama runtime and maps the structured result back into the existing semantic fields.
 The aggregate object includes both the coarse `classification` and a finer `merit_score` in the `0..100` range for ranking similar images.
+When semantic analysis is enabled, the response may contain multiple juror votes in `semantic.votes`; the service aggregates those juror opinions into the single top-level classification and merit score.
 
 ## Error handling
 

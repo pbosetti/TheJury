@@ -6,6 +6,12 @@
 
 namespace ppa {
 
+struct JurorDefinition {
+    std::string judge_id;
+    std::string personality;
+    double weight{1.0};
+};
+
 struct OllamaSettings {
     std::string base_url{"http://127.0.0.1:11434"};
     std::string model{"qwen2.5vl:7b"};
@@ -20,6 +26,7 @@ struct SemanticSettings {
 struct ServiceConfig {
     OllamaSettings ollama;
     SemanticSettings semantic;
+    std::vector<JurorDefinition> jurors;
 };
 
 struct LoadedServiceConfig {

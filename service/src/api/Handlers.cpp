@@ -43,6 +43,7 @@ nlohmann::json config_payload(const CritiqueService& service,
     return nlohmann::json{
         {"ollama", service.config().ollama},
         {"semantic", service.config().semantic},
+        {"jurors", service.config().jurors},
         {"available_models", service.available_models()},
         {"path", config_path.string()},
         {"from_file", std::filesystem::exists(config_path)},
@@ -77,7 +78,9 @@ void register_routes(httplib::Server& server, CritiqueService& service, const st
 
     server.Put("/v1/config", [&service, &config_path](const httplib::Request& request, httplib::Response& response) {
         try {
-            auto config = nlohmann::json::parse(request.body).get<ServiceConfig>();
+            const auto payload = nlohmann::json::parse(request.body);
+            auto config = service.config();
+            from_json(payload, config);
             config = normalize_service_config(std::move(config));
             write_service_config(config_path, config);
             service.update_config(config);

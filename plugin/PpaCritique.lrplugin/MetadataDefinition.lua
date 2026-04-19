@@ -8,6 +8,7 @@ return {
         { id = 'ppaCritiqueConfidence', title = 'PPA Critique Confidence', dataType = 'string' },
         { id = 'ppaCritiqueSemanticSummary', title = 'PPA Critique Semantic Summary', dataType = 'string' },
         { id = 'ppaCritiqueSemanticVote', title = 'PPA Critique Semantic Vote', dataType = 'string' },
+        { id = 'ppaCritiqueSemanticVotes', title = 'PPA Critique Semantic Votes', dataType = 'string' },
         { id = 'ppaCritiqueSemanticVoteConfidence', title = 'PPA Critique Semantic Vote Confidence', dataType = 'string' },
         { id = 'ppaCritiqueSemanticRationale', title = 'PPA Critique Semantic Rationale', dataType = 'string' },
         { id = 'ppaCritiqueSemanticStrengths', title = 'PPA Critique Semantic Strengths', dataType = 'string' },

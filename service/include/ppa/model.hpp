@@ -25,6 +25,7 @@ struct CritiqueOptions {
     bool run_preflight{true};
     bool run_semantic{false};
     std::string semantic_provider{"disabled"};
+    std::vector<int> selected_jurors;
 };
 
 struct RequestMetadata {
@@ -130,6 +131,23 @@ struct ErrorResponse {
     std::string message;
 };
 
+inline void to_json(json& j, const JurorDefinition& value) {
+    j = json{{"judge_id", value.judge_id},
+             {"personality", value.personality},
+             {"weight", value.weight}};
+}
+inline void from_json(const json& j, JurorDefinition& value) {
+    if (j.contains("judge_id")) {
+        j.at("judge_id").get_to(value.judge_id);
+    }
+    if (j.contains("personality")) {
+        j.at("personality").get_to(value.personality);
+    }
+    if (j.contains("weight")) {
+        j.at("weight").get_to(value.weight);
+    }
+}
+
 inline void to_json(json& j, const OllamaSettings& value) {
     j = json{{"base_url", value.base_url},
              {"model", value.model},
@@ -161,7 +179,7 @@ inline void from_json(const json& j, SemanticSettings& value) {
 }
 
 inline void to_json(json& j, const ServiceConfig& value) {
-    j = json{{"ollama", value.ollama}, {"semantic", value.semantic}};
+    j = json{{"ollama", value.ollama}, {"semantic", value.semantic}, {"jurors", value.jurors}};
 }
 inline void from_json(const json& j, ServiceConfig& value) {
     if (j.contains("ollama")) {
@@ -169,6 +187,9 @@ inline void from_json(const json& j, ServiceConfig& value) {
     }
     if (j.contains("semantic")) {
         j.at("semantic").get_to(value.semantic);
+    }
+    if (j.contains("jurors")) {
+        j.at("jurors").get_to(value.jurors);
     }
 }
 
@@ -191,11 +212,17 @@ inline void to_json(json& j, const CritiqueOptions& value) {
     j = json{{"run_preflight", value.run_preflight},
              {"run_semantic", value.run_semantic},
              {"semantic_provider", value.semantic_provider}};
+    if (!value.selected_jurors.empty()) {
+        j["selected_jurors"] = value.selected_jurors;
+    }
 }
 inline void from_json(const json& j, CritiqueOptions& value) {
     j.at("run_preflight").get_to(value.run_preflight);
     j.at("run_semantic").get_to(value.run_semantic);
     j.at("semantic_provider").get_to(value.semantic_provider);
+    if (j.contains("selected_jurors")) {
+        j.at("selected_jurors").get_to(value.selected_jurors);
+    }
 }
 
 inline void to_json(json& j, const RequestMetadata& value) {

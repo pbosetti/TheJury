@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
+#include <set>
 #include <stdexcept>
 
 #include <toml++/toml.hpp>
@@ -26,6 +27,16 @@ std::string require_non_empty(std::string value, const std::string& field_name) 
     return value;
 }
 
+std::vector<JurorDefinition> default_jurors() {
+    return {
+        JurorDefinition{.judge_id = "J1", .personality = "Traditionalist. Reward classical craftsmanship, print competition discipline, and clean technical execution.", .weight = 1.0},
+        JurorDefinition{.judge_id = "J2", .personality = "Impact juror. Prioritize immediate emotional impact, storytelling, and audience engagement.", .weight = 1.0},
+        JurorDefinition{.judge_id = "J3", .personality = "Composition juror. Focus on visual design, balance, framing, and subject placement.", .weight = 1.0},
+        JurorDefinition{.judge_id = "J4", .personality = "Lighting juror. Emphasize quality of light, tonal separation, color harmony, and depth.", .weight = 1.0},
+        JurorDefinition{.judge_id = "J5", .personality = "Risk-taking juror. Appreciate originality, bold interpretation, and creative intent when supported by execution.", .weight = 1.0},
+    };
+}
+
 void validate(ServiceConfig& config) {
     config.ollama.base_url = require_non_empty(std::move(config.ollama.base_url), "ollama.base_url");
     config.ollama.model = require_non_empty(std::move(config.ollama.model), "ollama.model");
@@ -39,6 +50,22 @@ void validate(ServiceConfig& config) {
     if (config.ollama.fallback_model.empty()) {
         config.ollama.fallback_model = config.ollama.model;
     }
+
+    if (config.jurors.empty()) {
+        config.jurors = default_jurors();
+    }
+
+    auto seen_judges = std::set<std::string>{};
+    for (auto& juror : config.jurors) {
+        juror.judge_id = require_non_empty(std::move(juror.judge_id), "jurors[].judge_id");
+        juror.personality = require_non_empty(std::move(juror.personality), "jurors[].personality");
+        if (juror.weight <= 0.0) {
+            throw std::runtime_error("invalid configuration: jurors[].weight must be greater than zero");
+        }
+        if (!seen_judges.insert(juror.judge_id).second) {
+            throw std::runtime_error("invalid configuration: juror ids must be unique");
+        }
+    }
 }
 
 #if !defined(NDEBUG)
@@ -50,6 +77,7 @@ void log_loaded_config(const LoadedServiceConfig& loaded) {
     std::clog << "[debug] ollama.model: " << loaded.config.ollama.model << '\n';
     std::clog << "[debug] ollama.fallback_model: " << loaded.config.ollama.fallback_model << '\n';
     std::clog << "[debug] ollama.timeout_ms: " << loaded.config.ollama.timeout_ms << '\n';
+    std::clog << "[debug] jurors: " << loaded.config.jurors.size() << '\n';
 }
 #else
 void log_loaded_config(const LoadedServiceConfig&) {}
@@ -111,6 +139,29 @@ LoadedServiceConfig load_service_config(const std::filesystem::path& executable_
             if (const auto default_provider = table["semantic"]["default_provider"].value<std::string>()) {
                 loaded.config.semantic.default_provider = *default_provider;
             }
+            if (const auto* jurors = table["jurors"].as_array()) {
+                loaded.config.jurors.clear();
+                for (const auto& entry : *jurors) {
+                    const auto* juror_table = entry.as_table();
+                    if (juror_table == nullptr) {
+                        throw std::runtime_error("invalid configuration: jurors entries must be tables");
+                    }
+
+                    auto juror = JurorDefinition{};
+                    if (const auto judge_id = (*juror_table)["judge_id"].value<std::string>()) {
+                        juror.judge_id = *judge_id;
+                    }
+                    if (const auto personality = (*juror_table)["personality"].value<std::string>()) {
+                        juror.personality = *personality;
+                    }
+                    if (const auto weight = (*juror_table)["weight"].value<double>()) {
+                        juror.weight = *weight;
+                    } else if (const auto weight_int = (*juror_table)["weight"].value<int64_t>()) {
+                        juror.weight = static_cast<double>(*weight_int);
+                    }
+                    loaded.config.jurors.push_back(std::move(juror));
+                }
+            }
             loaded.from_file = true;
         } catch (const toml::parse_error& error) {
             throw std::runtime_error(
@@ -144,6 +195,15 @@ void write_service_config(const std::filesystem::path& output_path, const Servic
                            toml::table{
                                {"default_provider", config.semantic.default_provider},
                            });
+    auto jurors = toml::array{};
+    for (const auto& juror : config.jurors) {
+        jurors.push_back(toml::table{
+            {"judge_id", juror.judge_id},
+            {"personality", juror.personality},
+            {"weight", juror.weight},
+        });
+    }
+    table.insert_or_assign("jurors", std::move(jurors));
 
     auto output = std::ofstream(output_path);
     if (!output) {
