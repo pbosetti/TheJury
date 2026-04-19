@@ -468,7 +468,12 @@ TEST_CASE("critique endpoint returns error payload when semantic backend is unav
     image << "jpeg-bytes";
     image.close();
 
-    auto service = ppa::CritiqueService{};
+    auto transport = std::make_shared<MockOllamaTransport>();
+    transport->post_responses.push_back(
+        ppa::OllamaHttpResponse{.status = 0, .body = "", .error = "connection refused"});
+
+    auto service =
+        ppa::CritiqueService(ppa::ServiceConfig{}, ppa::OllamaClient(ppa::OllamaSettings{}, transport));
     auto server = TestServer(service);
     auto client = httplib::Client("127.0.0.1", server.port());
 
