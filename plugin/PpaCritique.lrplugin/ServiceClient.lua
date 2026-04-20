@@ -1,8 +1,12 @@
 local LrHttp = import 'LrHttp'
+local LrLogger = import 'LrLogger'
 local LrPrefs = import 'LrPrefs'
 local LrStringUtils = import 'LrStringUtils'
 
 local Json = require 'Json'
+
+local logger = LrLogger('TheJury')
+logger:enable('logfile')
 
 local ServiceClient = {
     defaultHost = 'http://127.0.0.1:6464',
@@ -10,7 +14,11 @@ local ServiceClient = {
 }
 
 local function encodeJson(payload)
-    local body = Json.encode(payload)
+    local ok, body = pcall(Json.encode, payload)
+    if not ok then
+        logger:error('JSON encode failed: ' .. tostring(body))
+        error(body)
+    end
     if LrStringUtils.unicodeToUtf8 then
         return LrStringUtils.unicodeToUtf8(body)
     end
@@ -19,11 +27,13 @@ end
 
 local function decodeJson(payload)
     if payload == nil or payload == '' then
+        logger:error('Local service returned an empty response body')
         return nil, 'empty response from local service'
     end
 
     local ok, decoded = pcall(Json.decode, payload)
     if not ok then
+        logger:error('JSON decode failed: ' .. tostring(decoded))
         return nil, decoded
     end
 
@@ -167,15 +177,34 @@ function ServiceClient.updateConfig(payload)
 end
 
 function ServiceClient.submitCritique(payload)
-    local body, headers = LrHttp.post(getHost() .. '/v1/critique', encodeJson(payload), {
+    local requestBody = encodeJson(payload)
+    logger:info(
+        'Submitting critique request to ' .. getHost() ..
+            '/v1/critique semantic=' .. tostring(payload.options and payload.options.run_semantic) ..
+            ' selected_jurors=' .. tostring(payload.options and payload.options.selected_jurors and #payload.options.selected_jurors or 0) ..
+            ' request_bytes=' .. tostring(#requestBody)
+    )
+
+    local body, headers = LrHttp.post(getHost() .. '/v1/critique', requestBody, {
         { field = 'Content-Type', value = 'application/json' },
     }, 'POST', getTimeoutSeconds())
     if body == nil then
+        logger:error('Critique request failed: ' .. tostring(describeHeaders(headers) or 'local service request failed'))
         return nil, describeHeaders(headers) or 'local service request failed', headers
     end
+    logger:info(
+        'Critique response received: bytes=' .. tostring(#body) ..
+            (describeHeaders(headers) and (' ' .. describeHeaders(headers)) or '')
+    )
     local decoded, err = decodeJson(body)
     if decoded and decoded.error then
+        logger:error('Critique response contained error: ' .. tostring(decoded.message or decoded.error))
         return nil, decoded.message or decoded.error, headers
+    end
+    if err then
+        logger:error('Critique response decode failed: ' .. tostring(err))
+    else
+        logger:info('Critique response decoded successfully')
     end
     return decoded, err, headers
 end

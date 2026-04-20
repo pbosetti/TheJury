@@ -133,6 +133,7 @@ local function applyPrefs(propertyTable)
     propertyTable.defaultSemanticMode = valueOrDefault(prefs.defaultSemanticMode, 'ask')
     propertyTable.defaultCategory = valueOrDefault(prefs.defaultCategory, 'Illustrative')
     propertyTable.serviceJurorSubset = valueOrDefault(prefs.defaultJurorSubset, '')
+    propertyTable.saveDetailedAnalysisBesideOriginalFile = prefs.saveDetailedAnalysisBesideOriginalFile == true
 
     if not containsOption(SemanticModeOptions, propertyTable.defaultSemanticMode) then
         propertyTable.defaultSemanticMode = 'ask'
@@ -148,6 +149,7 @@ local function persistPluginPrefs(propertyTable)
     prefs.serviceTimeoutSeconds = valueOrDefault(propertyTable.serviceTimeoutSeconds, DefaultServiceTimeoutSeconds)
     prefs.defaultSemanticMode = valueOrDefault(propertyTable.defaultSemanticMode, 'ask')
     prefs.defaultCategory = valueOrDefault(propertyTable.defaultCategory, 'Illustrative')
+    prefs.saveDetailedAnalysisBesideOriginalFile = propertyTable.saveDetailedAnalysisBesideOriginalFile == true
 end
 
 local function persistJurorSubset(propertyTable)
@@ -291,6 +293,7 @@ function PluginInfoProvider.startDialog(propertyTable)
 end
 
 function PluginInfoProvider.endDialog(propertyTable)
+    persistPluginPrefs(propertyTable)
     ServiceLifecycle.stop_status_polling()
 end
 
@@ -402,6 +405,16 @@ function PluginInfoProvider.sectionsForTopOfDialog(f, propertyTable)
                 spacing = f:label_spacing(),
                 f:static_text({ title = 'Default category', width = 120, alignment = 'right' }),
                 f:popup_menu({ value = bind('defaultCategory'), items = CategoryOptions }),
+            }),
+            f:row({
+                spacing = f:label_spacing(),
+                f:static_text({ title = 'Detailed sidecar', width = 120, alignment = 'right' }),
+                f:checkbox({
+                    title = 'Save detailed analysis beside original file',
+                    value = bind('saveDetailedAnalysisBesideOriginalFile'),
+                    checked_value = true,
+                    unchecked_value = false,
+                }),
             }),
         },
         {

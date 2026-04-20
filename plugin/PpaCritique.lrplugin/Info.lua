@@ -14,6 +14,12 @@ return {
         {
             title = 'PPA Critique...',
             file = 'CritiqueMenu.lua',
+            enabledWhen = 'photosSelected',
+        },
+        {
+            title = 'Show Critique Details...',
+            file = 'ShowCritiqueDetails.lua',
+            enabledWhen = 'photosSelected',
         },
     },
     VERSION = {

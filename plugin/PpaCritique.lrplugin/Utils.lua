@@ -17,11 +17,19 @@ local function exportFileNameForPhoto(photo)
 end
 
 local function safeGetRawMetadata(photo, key)
-    return photo:getRawMetadata(key)
+    local ok, value = pcall(photo.getRawMetadata, photo, key)
+    if ok then
+        return value
+    end
+    return nil
 end
 
 local function safeGetFormattedMetadata(photo, key)
-    return photo:getFormattedMetadata(key)
+    local ok, value = pcall(photo.getFormattedMetadata, photo, key)
+    if ok then
+        return value
+    end
+    return nil
 end
 
 local function trim(value)
@@ -358,6 +366,10 @@ function Utils.collectRequestMetadata(photo)
         )),
         original_path = firstNonEmptyValue(
             firstRawString(rawMetadata, { 'path', 'absolutePath', 'originalPath' }),
+            safeGetRawMetadata(photo, 'path'),
+            safeGetRawMetadata(photo, 'absolutePath'),
+            safeGetRawMetadata(photo, 'originalPath'),
+            safeGetFormattedMetadata(photo, 'path'),
             ''
         ),
         capture_time = firstNonEmptyValue(
@@ -400,6 +412,73 @@ end
 
 function Utils.currentTimestamp()
     return os.date('!%Y-%m-%dT%H:%M:%SZ')
+end
+
+function Utils.sanitizeText(value)
+    if type(value) ~= 'string' then
+        return value
+    end
+
+    local sanitized = value
+    sanitized = sanitized:gsub('\r\n', '\n')
+    sanitized = sanitized:gsub('\r', '\n')
+    sanitized = sanitized:gsub('[%z\1-\8\11\12\14-\31\127]', ' ')
+    sanitized = sanitized:gsub(' +', ' ')
+    sanitized = sanitized:gsub(' *\n *', '\n')
+    sanitized = sanitized:match('^%s*(.-)%s*$') or ''
+    return sanitized
+end
+
+function Utils.sanitizeJsonValue(value)
+    local kind = type(value)
+    if kind == 'string' then
+        return Utils.sanitizeText(value)
+    end
+    if kind ~= 'table' then
+        return value
+    end
+
+    local sanitized = {}
+    local isArray = true
+    local expectedIndex = 1
+    for key, _ in pairs(value) do
+        if type(key) ~= 'number' or key ~= expectedIndex then
+            isArray = false
+            break
+        end
+        expectedIndex = expectedIndex + 1
+    end
+
+    if isArray then
+        for index = 1, #value do
+            sanitized[index] = Utils.sanitizeJsonValue(value[index])
+        end
+        return sanitized
+    end
+
+    for key, nestedValue in pairs(value) do
+        sanitized[key] = Utils.sanitizeJsonValue(nestedValue)
+    end
+    return sanitized
+end
+
+function Utils.critiqueSidecarPath(originalPath)
+    if type(originalPath) ~= 'string' or originalPath == '' then
+        return nil, 'Original file path is not available for sidecar export.'
+    end
+
+    local parentDir = LrPathUtils.parent(originalPath)
+    if parentDir == nil or parentDir == '' then
+        return nil, 'Could not resolve the folder containing the original file.'
+    end
+
+    local leafName = originalPath:match('([^/\\]+)$') or originalPath
+    local stem = leafName:gsub('%.[^%.]+$', '')
+    if stem == '' then
+        stem = leafName
+    end
+
+    return LrPathUtils.child(parentDir, stem .. '_critique.json'), nil
 end
 
 return Utils

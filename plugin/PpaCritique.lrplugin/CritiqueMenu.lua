@@ -2,15 +2,19 @@ local LrApplication = import 'LrApplication'
 local LrBinding = import 'LrBinding'
 local LrDialogs = import 'LrDialogs'
 local LrFunctionContext = import 'LrFunctionContext'
+local LrLogger = import 'LrLogger'
 local LrPrefs = import 'LrPrefs'
 local LrProgressScope = import 'LrProgressScope'
 local LrView = import 'LrView'
 
+local Json = require 'Json'
 local ServiceClient = require 'ServiceClient'
 local ServiceLifecycle = require 'ServiceLifecycle'
 local Utils = require 'Utils'
 
 local bind = LrView.bind
+local logger = LrLogger('TheJury')
+logger:enable('logfile')
 
 local MetadataFields = {
     { id = 'ppaCritiqueStatus', title = 'PPA Critique Status', dataType = 'string' },
@@ -184,6 +188,40 @@ local function updateMetadata(photo, metadataValues)
     end)
 end
 
+local function writeDetailedAnalysisSidecar(request, response, metadataValues)
+    local outputPath, pathErr = Utils.critiqueSidecarPath(request.metadata and request.metadata.original_path)
+    if not outputPath then
+        return nil, pathErr
+    end
+
+    local payload = Utils.sanitizeJsonValue({
+        saved_at = Utils.currentTimestamp(),
+        request = request,
+        response = response,
+        metadata_values = metadataValues,
+    })
+
+    local fileHandle, openErr = io.open(outputPath, 'w')
+    if fileHandle == nil then
+        return nil, 'Could not open critique sidecar for writing: ' .. tostring(openErr or outputPath)
+    end
+
+    local ok, writeErr = pcall(function()
+        fileHandle:write(Json.encode(payload))
+        fileHandle:write('\n')
+        fileHandle:close()
+    end)
+
+    if not ok then
+        pcall(function()
+            fileHandle:close()
+        end)
+        return nil, 'Could not write critique sidecar: ' .. tostring(writeErr)
+    end
+
+    return outputPath, nil
+end
+
 local function updateCategorySelection(photo, category)
     local catalog = LrApplication.activeCatalog()
     catalog:withWriteAccessDo('Set PPA critique category', function()
@@ -317,8 +355,11 @@ local function showBatchSummary(successCount, failures, canceled, totalPhotos)
     end
 
     local lines = {}
+    local dialogStyle = 'critical'
+
     if canceled then
         lines[#lines + 1] = string.format('Critique canceled after processing %d of %d photo(s).', successCount + #failures, totalPhotos)
+        dialogStyle = 'warning'
     else
         lines[#lines + 1] = string.format('Processed %d of %d photo(s) successfully.', successCount, totalPhotos)
     end
@@ -331,7 +372,7 @@ local function showBatchSummary(successCount, failures, canceled, totalPhotos)
         end
     end
 
-    LrDialogs.message('PPA Critique', table.concat(lines, '\n'), canceled and 'warning' or 'critical')
+    LrDialogs.message('PPA Critique', table.concat(lines, '\n'), dialogStyle)
 end
 
 local function processPhoto(photo, category, runSemantic, progressScope, photoIndex, totalPhotos)
@@ -344,42 +385,70 @@ local function processPhoto(photo, category, runSemantic, progressScope, photoIn
     updateCategorySelection(photo, category)
 
     if progressScope:isCanceled() then
-        return nil, 'canceled', fileName
+        return nil, 'canceled', fileName, nil
     end
 
     updateProgress(progressScope, baseStep + 1, totalSteps, prefix .. ' - exporting JPEG...')
     local exportPath = Utils.exportPhoto(photo)
 
     if progressScope:isCanceled() then
-        return nil, 'canceled', fileName
+        return nil, 'canceled', fileName, nil
     end
 
     updateProgress(progressScope, baseStep + 2, totalSteps, prefix .. ' - collecting Lightroom metadata...')
     local request = buildRequest(photo, exportPath, runSemantic, category)
+    logger:info(
+        'Critique request prepared for ' .. tostring(fileName) ..
+            ' semantic=' .. tostring(runSemantic) ..
+            ' selected_jurors=' .. tostring(request.options and request.options.selected_jurors and #request.options.selected_jurors or 0) ..
+            ' original_path=' .. tostring(request.metadata and request.metadata.original_path or '')
+    )
 
     if progressScope:isCanceled() then
-        return nil, 'canceled', fileName
+        return nil, 'canceled', fileName, nil
     end
 
     updateProgress(progressScope, baseStep + 3, totalSteps, prefix .. ' - submitting to local service...')
+    logger:info('About to submit critique request for ' .. tostring(fileName))
     local response, err = ServiceClient.submitCritique(request)
     if not response then
-        return nil, err or 'Request to local service failed.', fileName
+        return nil, err or 'Request to local service failed.', fileName, nil
     end
+    response = Utils.sanitizeJsonValue(response)
+
+    logger:info('Critique response received for ' .. tostring(fileName))
 
     if progressScope:isCanceled() then
-        return nil, 'canceled', fileName
+        return nil, 'canceled', fileName, nil
     end
 
     updateProgress(progressScope, baseStep + 4, totalSteps, prefix .. ' - writing metadata...')
-    local metadataValues = buildMetadataValues(request, response)
+    local metadataValues = Utils.sanitizeJsonValue(buildMetadataValues(request, response))
     updateMetadata(photo, metadataValues)
+    logger:info('Metadata written for ' .. tostring(fileName))
+
+    if pluginPrefs().saveDetailedAnalysisBesideOriginalFile == true then
+        local _, sidecarErr = writeDetailedAnalysisSidecar(request, response, metadataValues)
+        if sidecarErr then
+            return nil, sidecarErr, fileName, nil
+        end
+        logger:info('Detailed critique sidecar written for ' .. tostring(fileName))
+    end
+
     updateProgress(progressScope, baseStep + 5, totalSteps, prefix .. ' - complete.')
 
-    return true, nil, fileName
+    return true, nil, fileName, {
+        request = request,
+        response = response,
+        metadataValues = metadataValues,
+    }
 end
 
 LrFunctionContext.postAsyncTaskWithContext('PPA Critique', function(context)
+    if LrDialogs.attachErrorDialogToFunctionContext then
+        LrDialogs.attachErrorDialogToFunctionContext(context)
+    end
+
     local photos = Utils.getSelectedPhotos()
     if not photos then
         return
@@ -430,14 +499,17 @@ LrFunctionContext.postAsyncTaskWithContext('PPA Critique', function(context)
             break
         end
 
-        local ok, err, fileName = processPhoto(photo, category, runSemantic, progressScope, index, totalPhotos)
-        if ok then
+        logger:info('Starting critique for ' .. tostring(photoFileName(photo)))
+        local processed, err, fileName = processPhoto(photo, category, runSemantic, progressScope, index, totalPhotos)
+
+        if processed then
             successCount = successCount + 1
         elseif err == 'canceled' then
             canceled = true
             break
         else
             appendFailure(failures, fileName, err)
+            logger:error('Critique failed for ' .. tostring(fileName) .. ': ' .. tostring(err))
         end
     end
 
