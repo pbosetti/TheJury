@@ -20,7 +20,8 @@ public:
 
     SemanticOutput evaluate(const CritiqueRequest& request, const PreflightReport& preflight) override {
         std::ostringstream prompt;
-        prompt << "You are coordinating a five-juror PPA image critique panel. "
+        prompt << "You are coordinating a " << _jurors.size() 
+               << "-juror PPA image critique panel. "
                << "Review the supplied image and respond with valid JSON only. "
                << "Return an object with keys: summary, votes, strengths, improvements. "
                << "votes must contain exactly " << _jurors.size()

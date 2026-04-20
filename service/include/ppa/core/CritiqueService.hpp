@@ -10,6 +10,7 @@
 #include "ppa/api/ApiError.hpp"
 #include "ppa/config/ServiceConfig.hpp"
 #include "ppa/preflight/StubPreflightEngine.hpp"
+#include "ppa/runtime/RuntimeSupport.hpp"
 #include "ppa/semantic/OllamaClient.hpp"
 #include "ppa/semantic/SemanticProviderFactory.hpp"
 
@@ -39,8 +40,8 @@ public:
 
     [[nodiscard]] CapabilitiesResponse capabilities() const {
         return CapabilitiesResponse{
-            .service = "ppa-companion",
-            .version = "0.1.0",
+            .service = runtime::kServiceName,
+            .version = runtime::kServiceVersion,
             .semantic = SemanticCapabilities{
                 .enabled = true,
                 .default_provider = _config.semantic.default_provider,

@@ -4,6 +4,7 @@ local LrTasks = import 'LrTasks'
 local LrView = import 'LrView'
 
 local ServiceClient = require 'ServiceClient'
+local ServiceLifecycle = require 'ServiceLifecycle'
 
 local bind = LrView.bind
 
@@ -226,15 +227,107 @@ function PluginInfoProvider.startDialog(propertyTable)
     propertyTable.serviceConfigPath = ''
     propertyTable.serviceConfigOrigin = ''
     propertyTable.jurorSummary = ''
+    propertyTable.runtimeState = 'Starting'
+    propertyTable.runtimeReachability = 'Unknown'
+    propertyTable.runtimePid = ''
+    propertyTable.runtimeUptimeSeconds = '0'
+    propertyTable.runtimeJobsInFlight = '0'
+    propertyTable.runtimeLeaseCount = '0'
+    propertyTable.runtimeProviderModel = 'unknown'
+    propertyTable.runtimeLastError = 'None'
+    propertyTable.runtimeStatusText = 'Waiting for managed service status...'
     propertyTable.statusText = 'Ready.'
 
     LrTasks.startAsyncTask(function()
         refreshFromService(propertyTable)
     end)
+    ServiceLifecycle.start_status_polling(propertyTable)
+    ServiceLifecycle.start_managed_service_async(propertyTable)
+end
+
+function PluginInfoProvider.endDialog(propertyTable)
+    ServiceLifecycle.stop_status_polling()
 end
 
 function PluginInfoProvider.sectionsForTopOfDialog(f, propertyTable)
     return {
+        {
+            title = 'Managed Service Runtime',
+            synopsis = bind('runtimeStatusText'),
+            bind_to_object = propertyTable,
+
+            f:row({
+                spacing = f:label_spacing(),
+                f:static_text({ title = 'Lifecycle state', width = 120, alignment = 'right' }),
+                f:static_text({ title = bind('runtimeState'), width_in_chars = 20 }),
+            }),
+            f:row({
+                spacing = f:label_spacing(),
+                f:static_text({ title = 'Reachability', width = 120, alignment = 'right' }),
+                f:static_text({ title = bind('runtimeReachability'), width_in_chars = 20 }),
+            }),
+            f:row({
+                spacing = f:label_spacing(),
+                f:static_text({ title = 'PID', width = 120, alignment = 'right' }),
+                f:static_text({ title = bind('runtimePid'), width_in_chars = 20 }),
+            }),
+            f:row({
+                spacing = f:label_spacing(),
+                f:static_text({ title = 'Uptime (s)', width = 120, alignment = 'right' }),
+                f:static_text({ title = bind('runtimeUptimeSeconds'), width_in_chars = 20 }),
+            }),
+            f:row({
+                spacing = f:label_spacing(),
+                f:static_text({ title = 'Active jobs', width = 120, alignment = 'right' }),
+                f:static_text({ title = bind('runtimeJobsInFlight'), width_in_chars = 20 }),
+            }),
+            f:row({
+                spacing = f:label_spacing(),
+                f:static_text({ title = 'Active leases', width = 120, alignment = 'right' }),
+                f:static_text({ title = bind('runtimeLeaseCount'), width_in_chars = 20 }),
+            }),
+            f:row({
+                spacing = f:label_spacing(),
+                f:static_text({ title = 'Provider / model', width = 120, alignment = 'right' }),
+                f:static_text({ title = bind('runtimeProviderModel'), width_in_chars = 45 }),
+            }),
+            f:row({
+                spacing = f:label_spacing(),
+                f:static_text({ title = 'Last lifecycle error', width = 120, alignment = 'right' }),
+                f:static_text({ title = bind('runtimeLastError'), width_in_chars = 45, height_in_lines = 2 }),
+            }),
+            f:row({
+                spacing = f:control_spacing(),
+                f:push_button({
+                    title = 'Start',
+                    action = function()
+                        ServiceLifecycle.start_managed_service_async(propertyTable)
+                    end,
+                }),
+                f:push_button({
+                    title = 'Stop',
+                    action = function()
+                        ServiceLifecycle.stop_managed_service_async(propertyTable)
+                    end,
+                }),
+                f:push_button({
+                    title = 'Restart',
+                    action = function()
+                        ServiceLifecycle.stop_managed_service_async(propertyTable)
+                        LrTasks.startAsyncTask(function()
+                            LrTasks.sleep(1)
+                            ServiceLifecycle.start_managed_service_async(propertyTable)
+                        end)
+                    end,
+                }),
+                f:push_button({
+                    title = 'Refresh',
+                    action = function()
+                        ServiceLifecycle.refresh_status_async(propertyTable)
+                    end,
+                }),
+            }),
+        },
         {
             title = 'Plugin Defaults',
             synopsis = bind('statusText'),

@@ -49,6 +49,10 @@ nlohmann::json config_payload(const CritiqueService& service,
         {"from_file", std::filesystem::exists(config_path)},
     };
 }
+
+RuntimeStatus runtime_status_payload(const CritiqueService& service, RuntimeManager& runtime_manager) {
+    return runtime_manager.status(service);
+}
 }  // namespace
 
 nlohmann::json health_payload() {
@@ -63,10 +67,49 @@ CritiqueResponse critique_payload(const CritiqueService& service, const Critique
     return service.critique(request);
 }
 
-void register_routes(httplib::Server& server, CritiqueService& service, const std::filesystem::path& config_path) {
+void register_routes(httplib::Server& server,
+                     CritiqueService& service,
+                     RuntimeManager& runtime_manager,
+                     const std::filesystem::path& config_path) {
     server.Get("/health", [](const httplib::Request&, httplib::Response& response) {
         set_json(response, health_payload());
     });
+
+    server.Get("/v1/runtime/status", [&service, &runtime_manager](const httplib::Request&, httplib::Response& response) {
+        set_json(response, nlohmann::json(runtime_status_payload(service, runtime_manager)));
+    });
+
+    server.Put("/v1/runtime/lease", [&service, &runtime_manager](const httplib::Request& request, httplib::Response& response) {
+        try {
+            const auto payload = nlohmann::json::parse(request.body).get<RuntimeLeaseRequest>();
+            set_json(response, nlohmann::json(runtime_manager.renew_lease(payload)));
+        } catch (const ApiError& error) {
+            set_json(response, nlohmann::json(ErrorResponse{.error = error.code(), .message = error.what()}), error.status());
+        } catch (const std::exception& error) {
+            set_json(response, nlohmann::json(ErrorResponse{.error = "invalid_request", .message = error.what()}), 400);
+        }
+    });
+
+    server.Delete(R"(/v1/runtime/lease/([A-Za-z0-9._-]+))",
+                  [&service, &runtime_manager](const httplib::Request& request, httplib::Response& response) {
+                      try {
+                          const auto instance_id = request.matches[1].str();
+                          set_json(response, nlohmann::json(runtime_manager.release_lease(service, instance_id)));
+                      } catch (const ApiError& error) {
+                          set_json(response,
+                                   nlohmann::json(ErrorResponse{.error = error.code(), .message = error.what()}),
+                                   error.status());
+                      } catch (const std::exception& error) {
+                          set_json(response,
+                                   nlohmann::json(ErrorResponse{.error = "invalid_request", .message = error.what()}),
+                                   400);
+                      }
+                  });
+
+    server.Post("/v1/runtime/shutdown",
+                [&service, &runtime_manager](const httplib::Request&, httplib::Response& response) {
+                    set_json(response, nlohmann::json(runtime_manager.request_shutdown(service)));
+                });
 
     server.Get("/v1/capabilities", [&service](const httplib::Request&, httplib::Response& response) {
         set_json(response, nlohmann::json(capabilities_payload(service)));
@@ -92,8 +135,12 @@ void register_routes(httplib::Server& server, CritiqueService& service, const st
         }
     });
 
-    server.Post("/v1/critique", [&service](const httplib::Request& request, httplib::Response& response) {
+    server.Post("/v1/critique", [&service, &runtime_manager](const httplib::Request& request, httplib::Response& response) {
         try {
+            auto job_guard = runtime_manager.try_begin_job();
+            if (!job_guard) {
+                throw ApiError(503, "service_draining", "service is draining and not accepting new critique jobs");
+            }
             const auto payload = nlohmann::json::parse(request.body);
             const auto critique_request = payload.get<CritiqueRequest>();
             log_critique_request(critique_request, payload);

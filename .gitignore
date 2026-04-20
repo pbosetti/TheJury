@@ -1,4 +1,5 @@
 /build/
+/plugin/PpaCritique.lrplugin/bin/
 /.idea/
 /.vscode/
 .DS_Store

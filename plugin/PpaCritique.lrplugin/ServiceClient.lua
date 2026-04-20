@@ -102,6 +102,56 @@ function ServiceClient.getConfig()
     return decoded, err, headers
 end
 
+function ServiceClient.getRuntimeStatus()
+    local body, headers = LrHttp.get(getHost() .. '/v1/runtime/status', nil, getTimeoutSeconds())
+    if body == nil then
+        return nil, describeHeaders(headers) or 'local service request failed', headers
+    end
+    local decoded, err = decodeJson(body)
+    if decoded and decoded.error then
+        return nil, decoded.message or decoded.error, headers
+    end
+    return decoded, err, headers
+end
+
+function ServiceClient.renewRuntimeLease(payload)
+    local body, headers = LrHttp.post(getHost() .. '/v1/runtime/lease', encodeJson(payload), {
+        { field = 'Content-Type', value = 'application/json' },
+    }, 'PUT', getTimeoutSeconds())
+    if body == nil then
+        return nil, describeHeaders(headers) or 'local service request failed', headers
+    end
+    local decoded, err = decodeJson(body)
+    if decoded and decoded.error then
+        return nil, decoded.message or decoded.error, headers
+    end
+    return decoded, err, headers
+end
+
+function ServiceClient.releaseRuntimeLease(instanceId)
+    local body, headers = LrHttp.post(getHost() .. '/v1/runtime/lease/' .. tostring(instanceId), '', nil, 'DELETE', getTimeoutSeconds())
+    if body == nil then
+        return nil, describeHeaders(headers) or 'local service request failed', headers
+    end
+    local decoded, err = decodeJson(body)
+    if decoded and decoded.error then
+        return nil, decoded.message or decoded.error, headers
+    end
+    return decoded, err, headers
+end
+
+function ServiceClient.requestRuntimeShutdown()
+    local body, headers = LrHttp.post(getHost() .. '/v1/runtime/shutdown', '', nil, 'POST', getTimeoutSeconds())
+    if body == nil then
+        return nil, describeHeaders(headers) or 'local service request failed', headers
+    end
+    local decoded, err = decodeJson(body)
+    if decoded and decoded.error then
+        return nil, decoded.message or decoded.error, headers
+    end
+    return decoded, err, headers
+end
+
 function ServiceClient.updateConfig(payload)
     local body, headers = LrHttp.post(getHost() .. '/v1/config', encodeJson(payload), {
         { field = 'Content-Type', value = 'application/json' },

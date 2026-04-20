@@ -6,6 +6,9 @@ return {
     LrPluginInfoUrl = 'https://github.com/pbosetti/TheJury',
     LrPluginInfoProvider = 'PluginInfoProvider.lua',
     LrInitPlugin = 'PluginInit.lua',
+    LrShutdownPlugin = 'PluginShutdown.lua',
+    LrEnablePlugin = 'PluginEnable.lua',
+    LrDisablePlugin = 'PluginDisable.lua',
     LrMetadataProvider = 'MetadataDefinition.lua',
     LrLibraryMenuItems = {
         {

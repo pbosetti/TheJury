@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <vector>
@@ -70,6 +71,33 @@ struct CapabilitiesResponse {
 struct RuntimeInfo {
     std::string semantic_provider{"disabled"};
     std::string model;
+};
+
+struct RuntimeLeaseRequest {
+    std::string client;
+    std::string instance_id;
+    int ttl_seconds{45};
+};
+
+struct RuntimeLeaseResponse {
+    std::string state{"stopped"};
+    int expires_in_seconds{0};
+    int active_lease_count{0};
+};
+
+struct RuntimeStatus {
+    std::string state{"stopped"};
+    bool reachable{false};
+    std::string service{"ppa-companion"};
+    std::string version{"0.1.0"};
+    std::uint32_t pid{0};
+    std::uint64_t uptime_seconds{0};
+    int jobs_in_flight{0};
+    int active_lease_count{0};
+    int lease_ttl_seconds{45};
+    std::string provider{"disabled"};
+    std::string model;
+    std::string last_error;
 };
 
 struct PreflightCheck {
@@ -315,6 +343,81 @@ inline void to_json(json& j, const RuntimeInfo& value) {
 inline void from_json(const json& j, RuntimeInfo& value) {
     j.at("semantic_provider").get_to(value.semantic_provider);
     j.at("model").get_to(value.model);
+}
+
+inline void to_json(json& j, const RuntimeLeaseRequest& value) {
+    j = json{{"client", value.client},
+             {"instance_id", value.instance_id},
+             {"ttl_seconds", value.ttl_seconds}};
+}
+inline void from_json(const json& j, RuntimeLeaseRequest& value) {
+    j.at("client").get_to(value.client);
+    j.at("instance_id").get_to(value.instance_id);
+    if (j.contains("ttl_seconds")) {
+        j.at("ttl_seconds").get_to(value.ttl_seconds);
+    }
+}
+
+inline void to_json(json& j, const RuntimeLeaseResponse& value) {
+    j = json{{"state", value.state},
+             {"expires_in_seconds", value.expires_in_seconds},
+             {"active_lease_count", value.active_lease_count}};
+}
+inline void from_json(const json& j, RuntimeLeaseResponse& value) {
+    j.at("state").get_to(value.state);
+    j.at("expires_in_seconds").get_to(value.expires_in_seconds);
+    j.at("active_lease_count").get_to(value.active_lease_count);
+}
+
+inline void to_json(json& j, const RuntimeStatus& value) {
+    j = json{{"state", value.state},
+             {"reachable", value.reachable},
+             {"service", value.service},
+             {"version", value.version},
+             {"pid", value.pid},
+             {"uptime_seconds", value.uptime_seconds},
+             {"jobs_in_flight", value.jobs_in_flight},
+             {"active_lease_count", value.active_lease_count},
+             {"lease_ttl_seconds", value.lease_ttl_seconds},
+             {"provider", value.provider},
+             {"model", value.model},
+             {"last_error", value.last_error}};
+}
+inline void from_json(const json& j, RuntimeStatus& value) {
+    j.at("state").get_to(value.state);
+    if (j.contains("reachable")) {
+        j.at("reachable").get_to(value.reachable);
+    }
+    if (j.contains("service")) {
+        j.at("service").get_to(value.service);
+    }
+    if (j.contains("version")) {
+        j.at("version").get_to(value.version);
+    }
+    if (j.contains("pid")) {
+        j.at("pid").get_to(value.pid);
+    }
+    if (j.contains("uptime_seconds")) {
+        j.at("uptime_seconds").get_to(value.uptime_seconds);
+    }
+    if (j.contains("jobs_in_flight")) {
+        j.at("jobs_in_flight").get_to(value.jobs_in_flight);
+    }
+    if (j.contains("active_lease_count")) {
+        j.at("active_lease_count").get_to(value.active_lease_count);
+    }
+    if (j.contains("lease_ttl_seconds")) {
+        j.at("lease_ttl_seconds").get_to(value.lease_ttl_seconds);
+    }
+    if (j.contains("provider")) {
+        j.at("provider").get_to(value.provider);
+    }
+    if (j.contains("model")) {
+        j.at("model").get_to(value.model);
+    }
+    if (j.contains("last_error")) {
+        j.at("last_error").get_to(value.last_error);
+    }
 }
 
 inline void to_json(json& j, const PreflightCheck& value) {

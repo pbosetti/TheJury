@@ -7,6 +7,7 @@ local LrProgressScope = import 'LrProgressScope'
 local LrView = import 'LrView'
 
 local ServiceClient = require 'ServiceClient'
+local ServiceLifecycle = require 'ServiceLifecycle'
 local Utils = require 'Utils'
 
 local bind = LrView.bind
@@ -400,6 +401,12 @@ LrFunctionContext.postAsyncTaskWithContext('PPA Critique', function(context)
 
     local runSemantic = chooseSemanticMode()
     if runSemantic == nil then
+        return
+    end
+
+    local _, startErr = ServiceLifecycle.ensure_service_running()
+    if startErr then
+        LrDialogs.message('PPA Critique', 'Could not start the managed local service: ' .. tostring(startErr), 'critical')
         return
     end
 

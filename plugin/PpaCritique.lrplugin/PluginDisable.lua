@@ -4,5 +4,5 @@ local ServiceLifecycle = require 'ServiceLifecycle'
 
 local logger = LrLogger('TheJury')
 logger:enable('logfile')
-logger:info('The Jury plugin initialized')
-ServiceLifecycle.start_managed_service_async()
+logger:info('The Jury plugin disabled')
+ServiceLifecycle.stop_managed_service_now()

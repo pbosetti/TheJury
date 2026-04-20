@@ -13,6 +13,7 @@
 #include "ppa/api/ApiError.hpp"
 #include "ppa/api/Handlers.hpp"
 #include "ppa/config/ServiceConfig.hpp"
+#include "ppa/runtime/RuntimeManager.hpp"
 #include "ppa/semantic/OllamaClient.hpp"
 
 namespace {
@@ -67,17 +68,47 @@ public:
     }
 };
 
+class DelayedOllamaTransport final : public ppa::OllamaTransport {
+public:
+    explicit DelayedOllamaTransport(std::chrono::milliseconds delay, ppa::OllamaHttpResponse response)
+        : _delay(delay),
+          _response(std::move(response)) {}
+
+    [[nodiscard]] ppa::OllamaHttpResponse get(const std::string&) const override {
+        return ppa::OllamaHttpResponse{
+            .status = 200,
+            .body = json{{"models", json::array({json{{"name", "delayed-model"}}})}}.dump(),
+            .error = "",
+        };
+    }
+
+    [[nodiscard]] ppa::OllamaHttpResponse post(const std::string&, const std::string&) const override {
+        std::this_thread::sleep_for(_delay);
+        return _response;
+    }
+
+private:
+    std::chrono::milliseconds _delay;
+    ppa::OllamaHttpResponse _response;
+};
+
 class TestServer {
 public:
     explicit TestServer(ppa::CritiqueService& service, std::filesystem::path config_path = std::filesystem::temp_directory_path() / "ppa_service.toml")
-        : _config_path(std::move(config_path)) {
-        ppa::api::register_routes(_server, service, _config_path);
+        : _config_path(std::move(config_path)),
+          _runtime_manager(ppa::RuntimeManager::Options{
+              .default_lease_ttl_seconds = 1,
+              .shutdown_grace_seconds = 1,
+              .monitor_interval_ms = 50,
+          }) {
+        ppa::api::register_routes(_server, service, _runtime_manager, _config_path);
         _port = _server.bind_to_any_port("127.0.0.1");
         if (_port <= 0) {
             throw std::runtime_error("failed to bind test server");
         }
         _worker = std::thread([this] { _server.listen_after_bind(); });
         _server.wait_until_ready();
+        _runtime_manager.set_stop_callback([this] { _server.stop(); });
     }
 
     ~TestServer() {
@@ -94,6 +125,7 @@ private:
     int _port{0};
     std::thread _worker;
     std::filesystem::path _config_path;
+    ppa::RuntimeManager _runtime_manager;
 };
 
 std::string make_chat_response(const json& semantic_json) {
@@ -128,6 +160,21 @@ json make_panel_votes(std::initializer_list<std::tuple<const char*, const char*,
         });
     }
     return result;
+}
+
+bool wait_for_jobs_in_flight(httplib::Client& client, int expected_jobs, std::chrono::milliseconds timeout) {
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    while (std::chrono::steady_clock::now() < deadline) {
+        const auto response = client.Get("/v1/runtime/status");
+        if (response && response->status == 200) {
+            const auto body = json::parse(response->body);
+            if (body.at("jobs_in_flight") == expected_jobs) {
+                return true;
+            }
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(25));
+    }
+    return false;
 }
 
 ppa::CritiqueRequest semantic_request() {
@@ -481,6 +528,72 @@ TEST_CASE("health endpoint returns ok payload") {
     CHECK(json::parse(response->body) == json{{"status", "ok"}});
 }
 
+TEST_CASE("runtime status endpoint returns live runtime state") {
+    auto service = ppa::CritiqueService{};
+    auto server = TestServer(service);
+    auto client = httplib::Client("127.0.0.1", server.port());
+
+    const auto response = client.Get("/v1/runtime/status");
+
+    REQUIRE(response);
+    REQUIRE(response->status == 200);
+
+    const auto body = json::parse(response->body);
+    CHECK(body.at("state") == "running");
+    CHECK(body.at("reachable") == true);
+    CHECK(body.at("service") == "ppa-companion");
+    CHECK(body.at("version") == "0.1.0");
+    CHECK(body.at("active_lease_count") == 0);
+    CHECK(body.at("jobs_in_flight") == 0);
+    CHECK(body.at("provider") == "ollama");
+}
+
+TEST_CASE("runtime lease endpoint renews and releases leases") {
+    auto service = ppa::CritiqueService{};
+    auto server = TestServer(service);
+    auto client = httplib::Client("127.0.0.1", server.port());
+
+    const auto lease_response =
+        client.Put("/v1/runtime/lease",
+                   json{{"client", "com.pbosetti.thejury"}, {"instance_id", "instance-1"}, {"ttl_seconds", 2}}.dump(),
+                   "application/json");
+
+    REQUIRE(lease_response);
+    REQUIRE(lease_response->status == 200);
+    const auto lease_body = json::parse(lease_response->body);
+    CHECK(lease_body.at("state") == "running");
+    CHECK(lease_body.at("expires_in_seconds") == 2);
+    CHECK(lease_body.at("active_lease_count") == 1);
+
+    const auto status_response = client.Get("/v1/runtime/status");
+    REQUIRE(status_response);
+    REQUIRE(status_response->status == 200);
+    CHECK(json::parse(status_response->body).at("active_lease_count") == 1);
+
+    const auto release_response = client.Delete("/v1/runtime/lease/instance-1");
+    REQUIRE(release_response);
+    REQUIRE(release_response->status == 200);
+    const auto release_body = json::parse(release_response->body);
+    CHECK(release_body.at("state") == "running");
+    CHECK(release_body.at("active_lease_count") == 0);
+}
+
+TEST_CASE("runtime lease expiry stops the server after the grace period") {
+    auto service = ppa::CritiqueService{};
+    auto server = TestServer(service);
+    auto client = httplib::Client("127.0.0.1", server.port());
+
+    const auto lease_response =
+        client.Put("/v1/runtime/lease",
+                   json{{"client", "com.pbosetti.thejury"}, {"instance_id", "instance-2"}, {"ttl_seconds", 1}}.dump(),
+                   "application/json");
+    REQUIRE(lease_response);
+    REQUIRE(lease_response->status == 200);
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(2400));
+    CHECK_FALSE(client.Get("/health"));
+}
+
 TEST_CASE("capabilities endpoint returns provider list") {
     auto service = ppa::CritiqueService{};
     auto server = TestServer(service);
@@ -603,4 +716,48 @@ TEST_CASE("critique endpoint returns error payload when semantic backend is unav
 
     const auto body = json::parse(response->body);
     CHECK(body.at("error") == "semantic_unavailable");
+}
+
+TEST_CASE("runtime manager rejects new jobs once shutdown starts") {
+    auto service = ppa::CritiqueService{};
+    auto runtime_manager = ppa::RuntimeManager(ppa::RuntimeManager::Options{
+        .default_lease_ttl_seconds = 1,
+        .shutdown_grace_seconds = 1,
+        .monitor_interval_ms = 20,
+    });
+
+    auto job = runtime_manager.try_begin_job();
+    REQUIRE(job);
+
+    const auto shutdown_status = runtime_manager.request_shutdown(service);
+    CHECK(shutdown_status.state == "draining");
+    CHECK(shutdown_status.jobs_in_flight == 1);
+
+    auto rejected_job = runtime_manager.try_begin_job();
+    CHECK_FALSE(rejected_job);
+}
+
+TEST_CASE("runtime manager delays stop until active jobs finish") {
+    auto service = ppa::CritiqueService{};
+    auto runtime_manager = ppa::RuntimeManager(ppa::RuntimeManager::Options{
+        .default_lease_ttl_seconds = 1,
+        .shutdown_grace_seconds = 1,
+        .monitor_interval_ms = 20,
+    });
+
+    auto stop_requested = false;
+    runtime_manager.set_stop_callback([&stop_requested] { stop_requested = true; });
+
+    auto job = runtime_manager.try_begin_job();
+    REQUIRE(job);
+
+    const auto shutdown_status = runtime_manager.request_shutdown(service);
+    CHECK(shutdown_status.state == "draining");
+    CHECK(shutdown_status.jobs_in_flight == 1);
+    CHECK_FALSE(stop_requested);
+
+    job = ppa::RuntimeManager::JobGuard{};
+    std::this_thread::sleep_for(std::chrono::milliseconds(250));
+
+    CHECK(stop_requested);
 }
