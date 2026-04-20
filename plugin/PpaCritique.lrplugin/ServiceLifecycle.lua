@@ -4,6 +4,7 @@ local LrPathUtils = import 'LrPathUtils'
 local LrTasks = import 'LrTasks'
 
 local Json = require 'Json'
+local PluginVersion = require 'PluginVersion'
 local ServiceClient = require 'ServiceClient'
 
 local logger = LrLogger('TheJury')
@@ -454,7 +455,7 @@ function ServiceLifecycle.stop_managed_service_async(propertyTable)
                 state = 'stopped',
                 reachable = false,
                 service = 'ppa-companion',
-                version = '0.1.0',
+                version = PluginVersion.version or 'v0.1.0',
                 last_error = helperResult.exit_code ~= 0 and ('helper command failed with exit code ' .. tostring(helperResult.exit_code)) or '',
             }
             applyRuntimeStatus(propertyTable, payload)

@@ -62,6 +62,7 @@ add_library(ppa_service_lib
 target_include_directories(ppa_service_lib
   PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_BINARY_DIR}/generated/include
 )
 
 target_link_libraries(ppa_service_lib

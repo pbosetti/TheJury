@@ -4,10 +4,10 @@
 #include <filesystem>
 #include <string>
 
+#include "ppa/runtime/Version.hpp"
+
 namespace ppa::runtime {
 
-constexpr auto* kServiceName = "ppa-companion";
-constexpr auto* kServiceVersion = "0.1.0";
 constexpr int kDefaultLeaseTtlSeconds = 15;
 constexpr int kDefaultShutdownGraceSeconds = 5;
 constexpr int kDefaultMonitorIntervalMs = 500;

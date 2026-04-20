@@ -1,0 +1,6 @@
+return {
+    version = '@THEJURY_VERSION_TAG@',
+    major = @THEJURY_VERSION_MAJOR@,
+    minor = @THEJURY_VERSION_MINOR@,
+    patch = @THEJURY_VERSION_PATCH@,
+}

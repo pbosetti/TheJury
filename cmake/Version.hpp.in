@@ -1,0 +1,8 @@
+#pragma once
+
+namespace ppa::runtime {
+
+constexpr auto* kServiceName = "ppa-companion";
+constexpr auto* kServiceVersion = "@THEJURY_VERSION_TAG@";
+
+}  // namespace ppa::runtime

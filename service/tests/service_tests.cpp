@@ -542,7 +542,7 @@ TEST_CASE("runtime status endpoint returns live runtime state") {
     CHECK(body.at("state") == "running");
     CHECK(body.at("reachable") == true);
     CHECK(body.at("service") == "ppa-companion");
-    CHECK(body.at("version") == "0.1.0");
+    CHECK(body.at("version") == ppa::runtime::kServiceVersion);
     CHECK(body.at("active_lease_count") == 0);
     CHECK(body.at("jobs_in_flight") == 0);
     CHECK(body.at("provider") == "ollama");

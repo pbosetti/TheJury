@@ -3,6 +3,7 @@ local LrPrefs = import 'LrPrefs'
 local LrTasks = import 'LrTasks'
 local LrView = import 'LrView'
 
+local PluginVersion = require 'PluginVersion'
 local ServiceClient = require 'ServiceClient'
 local ServiceLifecycle = require 'ServiceLifecycle'
 
@@ -217,6 +218,7 @@ end
 
 function PluginInfoProvider.startDialog(propertyTable)
     applyPrefs(propertyTable)
+    propertyTable.pluginVersion = PluginVersion.version or 'v0.1.0'
     propertyTable.ollamaBaseUrl = 'http://127.0.0.1:11434'
     propertyTable.ollamaTimeoutMs = '120000'
     propertyTable.defaultProvider = 'ollama'
@@ -333,6 +335,11 @@ function PluginInfoProvider.sectionsForTopOfDialog(f, propertyTable)
             synopsis = bind('statusText'),
             bind_to_object = propertyTable,
 
+            f:row({
+                spacing = f:label_spacing(),
+                f:static_text({ title = 'Plugin version', width = 120, alignment = 'right' }),
+                f:static_text({ title = bind('pluginVersion'), width_in_chars = 20 }),
+            }),
             f:row({
                 spacing = f:label_spacing(),
                 f:static_text({ title = 'Service URL', width = 120, alignment = 'right' }),

@@ -17,9 +17,9 @@ return {
         },
     },
     VERSION = {
-        major = 0,
-        minor = 2,
-        revision = 0,
+        major = @THEJURY_VERSION_MAJOR@,
+        minor = @THEJURY_VERSION_MINOR@,
+        revision = @THEJURY_VERSION_PATCH@,
         build = 0,
     },
 }

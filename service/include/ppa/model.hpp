@@ -8,6 +8,7 @@
 #include <nlohmann/json.hpp>
 
 #include "ppa/config/ServiceConfig.hpp"
+#include "ppa/runtime/RuntimeSupport.hpp"
 
 namespace ppa {
 
@@ -64,7 +65,7 @@ struct SemanticCapabilities {
 
 struct CapabilitiesResponse {
     std::string service{"ppa-companion"};
-    std::string version{"0.1.0"};
+    std::string version{runtime::kServiceVersion};
     SemanticCapabilities semantic;
 };
 
@@ -89,7 +90,7 @@ struct RuntimeStatus {
     std::string state{"stopped"};
     bool reachable{false};
     std::string service{"ppa-companion"};
-    std::string version{"0.1.0"};
+    std::string version{runtime::kServiceVersion};
     std::uint32_t pid{0};
     std::uint64_t uptime_seconds{0};
     int jobs_in_flight{0};
