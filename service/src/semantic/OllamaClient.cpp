@@ -15,6 +15,18 @@
 namespace ppa {
 namespace {
 
+bool is_timeout_error(const httplib::Error error) {
+    return error == httplib::Error::ConnectionTimeout || error == httplib::Error::Read || error == httplib::Error::Write;
+}
+
+std::string describe_transport_error(const httplib::Error error) {
+    auto message = httplib::to_string(error);
+    if (message.empty() || message == "Unknown") {
+        message = "request to Ollama failed";
+    }
+    return message;
+}
+
 class HttplibOllamaTransport final : public OllamaTransport {
 public:
     explicit HttplibOllamaTransport(OllamaSettings settings) : _settings(std::move(settings)) {}
@@ -25,11 +37,17 @@ public:
         client.set_read_timeout(std::chrono::milliseconds(_settings.timeout_ms));
         client.set_write_timeout(std::chrono::milliseconds(_settings.timeout_ms));
 
-        if (const auto response = client.Get(path)) {
+        const auto response = client.Get(path);
+        if (response) {
             return OllamaHttpResponse{.status = response->status, .body = response->body, .error = ""};
         }
 
-        return OllamaHttpResponse{.status = 0, .body = "", .error = "request to Ollama failed"};
+        return OllamaHttpResponse{
+            .status = 0,
+            .body = "",
+            .error = describe_transport_error(response.error()),
+            .timed_out = is_timeout_error(response.error()),
+        };
     }
 
     [[nodiscard]] OllamaHttpResponse post(const std::string& path, const std::string& body) const override {
@@ -38,11 +56,17 @@ public:
         client.set_read_timeout(std::chrono::milliseconds(_settings.timeout_ms));
         client.set_write_timeout(std::chrono::milliseconds(_settings.timeout_ms));
 
-        if (const auto response = client.Post(path, body, "application/json")) {
+        const auto response = client.Post(path, body, "application/json");
+        if (response) {
             return OllamaHttpResponse{.status = response->status, .body = response->body, .error = ""};
         }
 
-        return OllamaHttpResponse{.status = 0, .body = "", .error = "request to Ollama failed"};
+        return OllamaHttpResponse{
+            .status = 0,
+            .body = "",
+            .error = describe_transport_error(response.error()),
+            .timed_out = is_timeout_error(response.error()),
+        };
     }
 
 private:
@@ -93,22 +117,39 @@ std::string base64_encode(const std::string& input) {
 }
 
 nlohmann::json output_schema() {
+    const auto element_review_schema = nlohmann::json{
+        {"type", "object"},
+        {"properties",
+         {
+             {"element", {{"type", "string"}}},
+             {"comment", {{"type", "string"}}},
+         }},
+        {"required", {"element", "comment"}},
+    };
+
+    const auto vote_schema = nlohmann::json{
+        {"type", "object"},
+        {"properties",
+         {
+             {"judge_id", {{"type", "string"}}},
+             {"vote", {{"type", "string"}}},
+             {"confidence", {{"type", "number"}}},
+             {"rationale", {{"type", "string"}}},
+             {"element_reviews",
+              {{"type", "array"},
+               {"minItems", 12},
+               {"maxItems", 12},
+               {"items", element_review_schema}}},
+         }},
+        {"required", {"judge_id", "vote", "confidence", "rationale", "element_reviews"}},
+    };
+
     return nlohmann::json{
         {"type", "object"},
         {"properties",
          {
              {"summary", {{"type", "string"}}},
-             {"votes",
-              {{"type", "array"},
-               {"minItems", 1},
-               {"items",
-                {{"type", "object"},
-                 {"properties",
-                  {{"judge_id", {{"type", "string"}}},
-                   {"vote", {{"type", "string"}}},
-                   {"confidence", {{"type", "number"}}},
-                   {"rationale", {{"type", "string"}}}}},
-                 {"required", {"judge_id", "vote", "confidence", "rationale"}}}}}},
+             {"votes", {{"type", "array"}, {"minItems", 1}, {"items", vote_schema}}},
              {"strengths", {{"type", "array"}, {"items", {{"type", "string"}}}}},
              {"improvements", {{"type", "array"}, {"items", {{"type", "string"}}}}},
          }},
@@ -224,6 +265,8 @@ SemanticOutput OllamaClient::evaluate(const std::string& prompt, const std::stri
 
     auto last_error = std::string{};
     auto last_status = 0;
+    auto last_timed_out = false;
+    auto saw_timeout = false;
     auto missing_models = std::vector<std::string>{};
 
     for (const auto& model : models) {
@@ -244,6 +287,8 @@ SemanticOutput OllamaClient::evaluate(const std::string& prompt, const std::stri
 
         const auto response = _transport->post("/api/chat", payload.dump());
         last_status = response.status;
+        last_timed_out = response.timed_out;
+        saw_timeout = saw_timeout || response.timed_out;
         if (!response.error.empty()) {
             last_error = response.error;
             continue;
@@ -266,6 +311,12 @@ SemanticOutput OllamaClient::evaluate(const std::string& prompt, const std::stri
     }
 
     if (last_status == 0) {
+        if (last_timed_out || saw_timeout) {
+            throw api::ApiError(504,
+                                "semantic_timeout",
+                                "Ollama timed out after " + std::to_string(_settings.timeout_ms) + " ms at " + _settings.base_url +
+                                    (last_error.empty() ? std::string{} : " (" + last_error + ")"));
+        }
         throw api::ApiError(503,
                             "semantic_unavailable",
                             "Ollama is not reachable at " + _settings.base_url +

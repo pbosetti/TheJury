@@ -46,6 +46,21 @@ local function appendVotes(lines, votes)
             vote.vote or 'n/a',
             tostring(vote.confidence or 'n/a')
         )
+        if vote.rationale ~= nil and vote.rationale ~= '' then
+            lines[#lines + 1] = '  Overall rationale: ' .. vote.rationale
+        end
+        local elementReviews = vote.element_reviews or {}
+        if #elementReviews == 0 then
+            lines[#lines + 1] = '  Element reviews: n/a'
+        else
+            for _, review in ipairs(elementReviews) do
+                lines[#lines + 1] = string.format(
+                    '  %s: %s',
+                    review.element or 'Element',
+                    review.comment or 'n/a'
+                )
+            end
+        end
     end
 end
 

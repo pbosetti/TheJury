@@ -149,6 +149,23 @@ std::vector<ppa::JurorDefinition> make_jurors(std::initializer_list<const char*>
     return jurors;
 }
 
+json make_element_reviews(const std::string& prefix) {
+    return json::array({
+        json{{"element", "Impact"}, {"comment", prefix + " Impact is addressed."}},
+        json{{"element", "Technical Excellence"}, {"comment", prefix + " Technical Excellence is addressed."}},
+        json{{"element", "Creativity"}, {"comment", prefix + " Creativity is addressed."}},
+        json{{"element", "Style"}, {"comment", prefix + " Style is addressed."}},
+        json{{"element", "Composition"}, {"comment", prefix + " Composition is addressed."}},
+        json{{"element", "Presentation"}, {"comment", prefix + " Presentation is addressed."}},
+        json{{"element", "Color Balance"}, {"comment", prefix + " Color Balance is addressed."}},
+        json{{"element", "Center of Interest"}, {"comment", prefix + " Center of Interest is addressed."}},
+        json{{"element", "Lighting"}, {"comment", prefix + " Lighting is addressed."}},
+        json{{"element", "Subject Matter"}, {"comment", prefix + " Subject Matter is addressed."}},
+        json{{"element", "Technique"}, {"comment", prefix + " Technique is addressed."}},
+        json{{"element", "Story Telling"}, {"comment", prefix + " Story Telling is addressed."}},
+    });
+}
+
 json make_panel_votes(std::initializer_list<std::tuple<const char*, const char*, double, const char*>> votes) {
     auto result = json::array();
     for (const auto& [judge_id, vote, confidence, rationale] : votes) {
@@ -157,6 +174,7 @@ json make_panel_votes(std::initializer_list<std::tuple<const char*, const char*,
             {"vote", vote},
             {"confidence", confidence},
             {"rationale", rationale},
+            {"element_reviews", make_element_reviews(judge_id)},
         });
     }
     return result;
@@ -240,7 +258,7 @@ TEST_CASE("service config defaults apply when config file is missing") {
     CHECK(loaded.config.ollama.base_url == "http://127.0.0.1:11434");
     CHECK(loaded.config.ollama.model == "qwen2.5vl:7b");
     CHECK(loaded.config.ollama.fallback_model == "qwen2.5vl:3b");
-    CHECK(loaded.config.ollama.timeout_ms == 120000);
+    CHECK(loaded.config.ollama.timeout_ms == 300000);
     CHECK(loaded.config.semantic.default_provider == "ollama");
     CHECK(loaded.config.jurors.size() == 5);
 }
@@ -349,6 +367,8 @@ TEST_CASE("ollama client evaluates image request and falls back to secondary mod
     CHECK(output.model == "secondary-model");
     CHECK(output.result.summary == "semantic summary");
     CHECK(output.result.votes.size() == 2);
+    CHECK(output.result.votes[0].element_reviews.size() == 12);
+    CHECK(output.result.votes[0].element_reviews[0].element == "Impact");
 
     const auto request_json = json::parse(transport->last_post_body);
     CHECK(transport->last_post_path == "/api/chat");
@@ -371,6 +391,31 @@ TEST_CASE("invalid Ollama output is treated as an error") {
 
     const auto client = ppa::OllamaClient(ppa::OllamaSettings{}, transport);
     CHECK_THROWS_AS(client.evaluate("Prompt text", image_path.string()), ppa::api::ApiError);
+}
+
+TEST_CASE("ollama timeout is reported as semantic_timeout") {
+    const auto temp_dir = TemporaryDirectory{};
+    const auto image_path = temp_dir.path() / "photo.jpg";
+    auto image = std::ofstream(image_path, std::ios::binary);
+    image << "jpeg-bytes";
+    image.close();
+
+    auto transport = std::make_shared<MockOllamaTransport>();
+    transport->post_responses.push_back(
+        ppa::OllamaHttpResponse{.status = 0, .body = "", .error = "Connection timeout", .timed_out = true});
+
+    auto settings = ppa::OllamaSettings{};
+    settings.timeout_ms = 45000;
+    const auto client = ppa::OllamaClient(settings, transport);
+
+    try {
+        (void)client.evaluate("Prompt text", image_path.string());
+        FAIL("expected semantic_timeout ApiError");
+    } catch (const ppa::api::ApiError& error) {
+        CHECK(error.status() == 504);
+        CHECK(error.code() == "semantic_timeout");
+        CHECK(std::string(error.what()).find("45000 ms") != std::string::npos);
+    }
 }
 
 TEST_CASE("aggregate stub serializes to expected shape") {
@@ -407,14 +452,34 @@ TEST_CASE("semantic critique returns populated response when Ollama succeeds") {
     transport->post_responses.push_back(
         ppa::OllamaHttpResponse{.status = 200,
                                 .body = make_chat_response(json{
-                                    {"summary", "semantic summary"},
+                                    {"summary", "J1 summary"},
                                     {"votes", make_panel_votes({
                                         {"J1", "C", 0.7, "Strong composition."},
-                                        {"J2", "C", 0.8, "Good impact."},
-                                        {"J3", "D", 0.5, "Needs refinement."},
                                     })},
                                     {"strengths", json::array({"Impact"})},
                                     {"improvements", json::array({"Refine crop"})},
+                                }),
+                                .error = ""});
+    transport->post_responses.push_back(
+        ppa::OllamaHttpResponse{.status = 200,
+                                .body = make_chat_response(json{
+                                    {"summary", "J2 summary"},
+                                    {"votes", make_panel_votes({
+                                        {"J2", "C", 0.8, "Good impact."},
+                                    })},
+                                    {"strengths", json::array({"Lighting"})},
+                                    {"improvements", json::array({"Refine crop"})},
+                                }),
+                                .error = ""});
+    transport->post_responses.push_back(
+        ppa::OllamaHttpResponse{.status = 200,
+                                .body = make_chat_response(json{
+                                    {"summary", "J3 summary"},
+                                    {"votes", make_panel_votes({
+                                        {"J3", "D", 0.5, "Needs refinement."},
+                                    })},
+                                    {"strengths", json::array({"Composition"})},
+                                    {"improvements", json::array({"Open shadows"})},
                                 }),
                                 .error = ""});
 
@@ -433,9 +498,11 @@ TEST_CASE("semantic critique returns populated response when Ollama succeeds") {
     CHECK(response.runtime.semantic_provider == "ollama");
     CHECK(response.runtime.model == "primary-model");
     CHECK(response.semantic->votes.size() == 3);
+    CHECK(response.semantic->votes[0].element_reviews.size() == 12);
+    CHECK(response.semantic->votes[0].element_reviews[11].element == "Story Telling");
     CHECK(response.aggregate.classification == "C");
     CHECK(response.aggregate.merit_score > 0.0);
-    CHECK(response.aggregate.summary == "semantic summary");
+    CHECK(response.aggregate.summary.find("J1 summary") != std::string::npos);
 }
 
 TEST_CASE("semantic critique honors selected juror subset and order") {
@@ -449,14 +516,34 @@ TEST_CASE("semantic critique honors selected juror subset and order") {
     transport->post_responses.push_back(
         ppa::OllamaHttpResponse{.status = 200,
                                 .body = make_chat_response(json{
-                                    {"summary", "subset semantic summary"},
+                                    {"summary", "J1 subset summary"},
                                     {"votes", make_panel_votes({
                                         {"J1", "C", 0.7, "Juror one rationale."},
-                                        {"J3", "D", 0.8, "Juror three rationale."},
-                                        {"J2", "C", 0.6, "Juror two rationale."},
                                     })},
                                     {"strengths", json::array({"Impact"})},
                                     {"improvements", json::array({"Refine crop"})},
+                                }),
+                                .error = ""});
+    transport->post_responses.push_back(
+        ppa::OllamaHttpResponse{.status = 200,
+                                .body = make_chat_response(json{
+                                    {"summary", "J3 subset summary"},
+                                    {"votes", make_panel_votes({
+                                        {"J3", "D", 0.8, "Juror three rationale."},
+                                    })},
+                                    {"strengths", json::array({"Design"})},
+                                    {"improvements", json::array({"Tone control"})},
+                                }),
+                                .error = ""});
+    transport->post_responses.push_back(
+        ppa::OllamaHttpResponse{.status = 200,
+                                .body = make_chat_response(json{
+                                    {"summary", "J2 subset summary"},
+                                    {"votes", make_panel_votes({
+                                        {"J2", "C", 0.6, "Juror two rationale."},
+                                    })},
+                                    {"strengths", json::array({"Lighting"})},
+                                    {"improvements", json::array({"Crop"})},
                                 }),
                                 .error = ""});
 
@@ -477,7 +564,187 @@ TEST_CASE("semantic critique honors selected juror subset and order") {
     CHECK(response.semantic->votes[0].judge_id == "J1");
     CHECK(response.semantic->votes[1].judge_id == "J3");
     CHECK(response.semantic->votes[2].judge_id == "J2");
-    CHECK(response.aggregate.summary == "subset semantic summary");
+    CHECK(response.semantic->votes[1].element_reviews[1].element == "Technical Excellence");
+    CHECK(response.aggregate.summary.find("J1 subset summary") != std::string::npos);
+}
+
+TEST_CASE("semantic critique remaps single returned vote to the selected single juror") {
+    const auto temp_dir = TemporaryDirectory{};
+    const auto image_path = temp_dir.path() / "photo.jpg";
+    auto image = std::ofstream(image_path, std::ios::binary);
+    image << "jpeg-bytes";
+    image.close();
+
+    auto transport = std::make_shared<MockOllamaTransport>();
+    transport->post_responses.push_back(
+        ppa::OllamaHttpResponse{.status = 200,
+                                .body = make_chat_response(json{
+                                    {"summary", "single juror summary"},
+                                    {"votes", make_panel_votes({
+                                        {"judge", "C", 0.9, "Single juror rationale."},
+                                    })},
+                                    {"strengths", json::array({"Impact"})},
+                                    {"improvements", json::array({"Refine crop"})},
+                                }),
+                                .error = ""});
+
+    auto config = ppa::ServiceConfig{};
+    config.ollama.model = "primary-model";
+    config.jurors = make_jurors({"J1", "J2", "J3"});
+
+    auto request = semantic_request();
+    request.image.path = image_path.string();
+    request.options.selected_jurors = {1};
+
+    auto service = ppa::CritiqueService(config, ppa::OllamaClient(config.ollama, transport));
+    const auto response = ppa::api::critique_payload(service, request);
+
+    REQUIRE(response.semantic.has_value());
+    REQUIRE(response.semantic->votes.size() == 1);
+    CHECK(response.semantic->votes[0].judge_id == "J1");
+    CHECK(response.semantic->votes[0].rationale == "Single juror rationale.");
+}
+
+TEST_CASE("semantic critique accepts common merit-element label variants") {
+    const auto temp_dir = TemporaryDirectory{};
+    const auto image_path = temp_dir.path() / "photo.jpg";
+    auto image = std::ofstream(image_path, std::ios::binary);
+    image << "jpeg-bytes";
+    image.close();
+
+    auto reviews = make_element_reviews("J1");
+    reviews[10]["element"] = "Techniques";
+    reviews[11]["element"] = "Storytelling";
+
+    auto transport = std::make_shared<MockOllamaTransport>();
+    transport->post_responses.push_back(
+        ppa::OllamaHttpResponse{.status = 200,
+                                .body = make_chat_response(json{
+                                    {"summary", "variant labels summary"},
+                                    {"votes",
+                                     json::array({
+                                         json{{"judge_id", "J1"},
+                                              {"vote", "C"},
+                                              {"confidence", 0.8},
+                                              {"rationale", "Variant labels rationale."},
+                                              {"element_reviews", reviews}},
+                                     })},
+                                    {"strengths", json::array({"Impact"})},
+                                    {"improvements", json::array({"Refine crop"})},
+                                }),
+                                .error = ""});
+
+    auto config = ppa::ServiceConfig{};
+    config.ollama.model = "primary-model";
+    config.jurors = make_jurors({"J1"});
+
+    auto request = semantic_request();
+    request.image.path = image_path.string();
+    request.options.selected_jurors = {1};
+
+    auto service = ppa::CritiqueService(config, ppa::OllamaClient(config.ollama, transport));
+    const auto response = ppa::api::critique_payload(service, request);
+
+    REQUIRE(response.semantic.has_value());
+    REQUIRE(response.semantic->votes.size() == 1);
+    CHECK(response.semantic->votes[0].element_reviews[10].element == "Technique");
+    CHECK(response.semantic->votes[0].element_reviews[11].element == "Story Telling");
+}
+
+TEST_CASE("semantic critique fills a single missing merit-element review") {
+    const auto temp_dir = TemporaryDirectory{};
+    const auto image_path = temp_dir.path() / "photo.jpg";
+    auto image = std::ofstream(image_path, std::ios::binary);
+    image << "jpeg-bytes";
+    image.close();
+
+    auto reviews = make_element_reviews("J1");
+    reviews.erase(reviews.begin() + 10);
+
+    auto transport = std::make_shared<MockOllamaTransport>();
+    transport->post_responses.push_back(
+        ppa::OllamaHttpResponse{.status = 200,
+                                .body = make_chat_response(json{
+                                    {"summary", "missing element summary"},
+                                    {"votes",
+                                     json::array({
+                                         json{{"judge_id", "J1"},
+                                              {"vote", "C"},
+                                              {"confidence", 0.8},
+                                              {"rationale", "Missing one element rationale."},
+                                              {"element_reviews", reviews}},
+                                     })},
+                                    {"strengths", json::array({"Impact"})},
+                                    {"improvements", json::array({"Refine crop"})},
+                                }),
+                                .error = ""});
+
+    auto config = ppa::ServiceConfig{};
+    config.ollama.model = "primary-model";
+    config.jurors = make_jurors({"J1"});
+
+    auto request = semantic_request();
+    request.image.path = image_path.string();
+    request.options.selected_jurors = {1};
+
+    auto service = ppa::CritiqueService(config, ppa::OllamaClient(config.ollama, transport));
+    const auto response = ppa::api::critique_payload(service, request);
+
+    REQUIRE(response.semantic.has_value());
+    REQUIRE(response.semantic->votes.size() == 1);
+    const auto& element_reviews = response.semantic->votes[0].element_reviews;
+    const auto found = std::find_if(element_reviews.begin(), element_reviews.end(), [](const ppa::MeritElementReview& review) {
+        return review.element == "Technique";
+    });
+    REQUIRE(found != element_reviews.end());
+    CHECK(found->comment.find("Not explicitly covered") != std::string::npos);
+}
+
+TEST_CASE("semantic critique rejects votes without all 12 merit-element reviews") {
+    const auto temp_dir = TemporaryDirectory{};
+    const auto image_path = temp_dir.path() / "photo.jpg";
+    auto image = std::ofstream(image_path, std::ios::binary);
+    image << "jpeg-bytes";
+    image.close();
+
+    auto transport = std::make_shared<MockOllamaTransport>();
+    transport->post_responses.push_back(
+        ppa::OllamaHttpResponse{.status = 200,
+                                .body = make_chat_response(json{
+                                    {"summary", "semantic summary"},
+                                    {"votes",
+                                     json::array({
+                                         json{{"judge_id", "J1"},
+                                              {"vote", "C"},
+                                              {"confidence", 0.7},
+                                              {"rationale", "Overall positive."},
+                                              {"element_reviews",
+                                               json::array({
+                                                   json{{"element", "Impact"}, {"comment", "Impact works."}},
+                                               })}},
+                                     })},
+                                    {"strengths", json::array({"Impact"})},
+                                    {"improvements", json::array({"Refine crop"})},
+                                }),
+                                .error = ""});
+
+    auto config = ppa::ServiceConfig{};
+    config.ollama.model = "primary-model";
+    config.jurors = make_jurors({"J1"});
+
+    auto request = semantic_request();
+    request.image.path = image_path.string();
+
+    auto service = ppa::CritiqueService(config, ppa::OllamaClient(config.ollama, transport));
+
+    try {
+        (void)ppa::api::critique_payload(service, request);
+        FAIL("expected semantic_invalid_response ApiError");
+    } catch (const ppa::api::ApiError& error) {
+        CHECK(error.status() == 502);
+        CHECK(error.code() == "semantic_invalid_response");
+        CHECK(std::string(error.what()).find("merit-element") != std::string::npos);
+    }
 }
 
 TEST_CASE("semantic critique rejects out-of-range selected jurors") {
@@ -693,7 +960,7 @@ TEST_CASE("critique endpoint returns error payload when semantic backend is unav
 
     auto transport = std::make_shared<MockOllamaTransport>();
     transport->post_responses.push_back(
-        ppa::OllamaHttpResponse{.status = 0, .body = "", .error = "connection refused"});
+        ppa::OllamaHttpResponse{.status = 0, .body = "", .error = "connection refused", .timed_out = false});
 
     auto service =
         ppa::CritiqueService(ppa::ServiceConfig{}, ppa::OllamaClient(ppa::OllamaSettings{}, transport));

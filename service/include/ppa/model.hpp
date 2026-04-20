@@ -101,6 +101,11 @@ struct RuntimeStatus {
     std::string last_error;
 };
 
+struct MeritElementReview {
+    std::string element;
+    std::string comment;
+};
+
 struct PreflightCheck {
     std::string id;
     std::string result;
@@ -125,6 +130,7 @@ struct JudgeVote {
     std::string vote;
     double confidence{0.0};
     std::string rationale;
+    std::vector<MeritElementReview> element_reviews;
 };
 
 struct SemanticResult {
@@ -430,6 +436,14 @@ inline void from_json(const json& j, PreflightCheck& value) {
     j.at("message").get_to(value.message);
 }
 
+inline void to_json(json& j, const MeritElementReview& value) {
+    j = json{{"element", value.element}, {"comment", value.comment}};
+}
+inline void from_json(const json& j, MeritElementReview& value) {
+    j.at("element").get_to(value.element);
+    j.at("comment").get_to(value.comment);
+}
+
 inline void to_json(json& j, const TechnicalScores& value) {
     j = json{{"technical_excellence", value.technical_excellence},
              {"color_balance", value.color_balance},
@@ -456,13 +470,15 @@ inline void to_json(json& j, const JudgeVote& value) {
     j = json{{"judge_id", value.judge_id},
              {"vote", value.vote},
              {"confidence", value.confidence},
-             {"rationale", value.rationale}};
+             {"rationale", value.rationale},
+             {"element_reviews", value.element_reviews}};
 }
 inline void from_json(const json& j, JudgeVote& value) {
     j.at("judge_id").get_to(value.judge_id);
     j.at("vote").get_to(value.vote);
     j.at("confidence").get_to(value.confidence);
     j.at("rationale").get_to(value.rationale);
+    j.at("element_reviews").get_to(value.element_reviews);
 }
 
 inline void to_json(json& j, const SemanticResult& value) {

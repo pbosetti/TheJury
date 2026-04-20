@@ -13,6 +13,7 @@ struct OllamaHttpResponse {
     int status{0};
     std::string body;
     std::string error;
+    bool timed_out{false};
 };
 
 class OllamaTransport {

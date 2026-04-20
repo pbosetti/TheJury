@@ -1,4 +1,5 @@
 local LrDialogs = import 'LrDialogs'
+local LrPathUtils = import 'LrPathUtils'
 local LrPrefs = import 'LrPrefs'
 local LrTasks = import 'LrTasks'
 local LrView = import 'LrView'
@@ -49,6 +50,12 @@ local function valueOrDefault(value, defaultValue)
         return defaultValue
     end
     return value
+end
+
+local function quoteShellPath(path)
+    local text = tostring(path or '')
+    text = text:gsub('"', '\\"')
+    return '"' .. text .. '"'
 end
 
 local function containsOption(options, value)
@@ -125,7 +132,7 @@ local function applyPrefs(propertyTable)
     propertyTable.serviceTimeoutSeconds = valueOrDefault(prefs.serviceTimeoutSeconds, DefaultServiceTimeoutSeconds)
     propertyTable.defaultSemanticMode = valueOrDefault(prefs.defaultSemanticMode, 'ask')
     propertyTable.defaultCategory = valueOrDefault(prefs.defaultCategory, 'Illustrative')
-    propertyTable.defaultJurorSubset = valueOrDefault(prefs.defaultJurorSubset, '')
+    propertyTable.serviceJurorSubset = valueOrDefault(prefs.defaultJurorSubset, '')
 
     if not containsOption(SemanticModeOptions, propertyTable.defaultSemanticMode) then
         propertyTable.defaultSemanticMode = 'ask'
@@ -135,13 +142,17 @@ local function applyPrefs(propertyTable)
     end
 end
 
-local function persistPrefs(propertyTable)
+local function persistPluginPrefs(propertyTable)
     local prefs = LrPrefs.prefsForPlugin()
     prefs.serviceHost = valueOrDefault(propertyTable.serviceHost, DefaultServiceHost)
     prefs.serviceTimeoutSeconds = valueOrDefault(propertyTable.serviceTimeoutSeconds, DefaultServiceTimeoutSeconds)
     prefs.defaultSemanticMode = valueOrDefault(propertyTable.defaultSemanticMode, 'ask')
     prefs.defaultCategory = valueOrDefault(propertyTable.defaultCategory, 'Illustrative')
-    prefs.defaultJurorSubset = valueOrDefault(propertyTable.defaultJurorSubset, '')
+end
+
+local function persistJurorSubset(propertyTable)
+    local prefs = LrPrefs.prefsForPlugin()
+    prefs.defaultJurorSubset = valueOrDefault(propertyTable.serviceJurorSubset, '')
 end
 
 local function applyServiceConfig(propertyTable, payload)
@@ -151,7 +162,7 @@ local function applyServiceConfig(propertyTable, payload)
     local jurors = payload.jurors or {}
 
     propertyTable.ollamaBaseUrl = valueOrDefault(ollama.base_url, 'http://127.0.0.1:11434')
-    propertyTable.ollamaTimeoutMs = tostring(ollama.timeout_ms or 120000)
+    propertyTable.ollamaTimeoutMs = tostring(ollama.timeout_ms or 300000)
     propertyTable.defaultProvider = valueOrDefault(semantic.default_provider, 'ollama')
     propertyTable.availableModelItems = uniqueModelItems(availableModels, ollama.model, ollama.fallback_model)
     propertyTable.ollamaModel = valueOrDefault(ollama.model, propertyTable.availableModelItems[1].value)
@@ -174,10 +185,41 @@ local function refreshFromService(propertyTable)
     propertyTable.statusText = 'Service settings loaded successfully.'
 end
 
+local function openConfigFolder(propertyTable)
+    local configPath = valueOrDefault(propertyTable.serviceConfigPath, '')
+    if configPath == '' then
+        propertyTable.statusText = 'No service config path is available yet.'
+        return
+    end
+
+    local folderPath = LrPathUtils.parent(configPath)
+    if folderPath == nil or folderPath == '' then
+        propertyTable.statusText = 'Could not resolve the folder containing the service config.'
+        return
+    end
+
+    local command
+    if WIN_ENV then
+        command = 'explorer ' .. quoteShellPath(folderPath)
+    elseif MAC_ENV then
+        command = 'open ' .. quoteShellPath(folderPath)
+    else
+        command = 'xdg-open ' .. quoteShellPath(folderPath)
+    end
+
+    local exitCode = LrTasks.execute(command)
+    if exitCode ~= 0 then
+        propertyTable.statusText = 'Could not open the service config folder.'
+        return
+    end
+
+    propertyTable.statusText = 'Opened the service config folder.'
+end
+
 local function saveToService(propertyTable)
     local timeoutMs = tonumber(propertyTable.ollamaTimeoutMs)
     local serviceTimeoutSeconds = tonumber(propertyTable.serviceTimeoutSeconds)
-    local jurorSubset = parseJurorSubset(propertyTable.defaultJurorSubset)
+    local jurorSubset = parseJurorSubset(propertyTable.serviceJurorSubset)
     if timeoutMs == nil or timeoutMs <= 0 then
         propertyTable.statusText = 'Timeout must be a positive integer.'
         return
@@ -191,7 +233,8 @@ local function saveToService(propertyTable)
         return
     end
 
-    persistPrefs(propertyTable)
+    persistPluginPrefs(propertyTable)
+    persistJurorSubset(propertyTable)
     propertyTable.statusText = 'Saving settings to local service...'
 
     local payload = {
@@ -220,7 +263,7 @@ function PluginInfoProvider.startDialog(propertyTable)
     applyPrefs(propertyTable)
     propertyTable.pluginVersion = PluginVersion.version or 'v0.1.0'
     propertyTable.ollamaBaseUrl = 'http://127.0.0.1:11434'
-    propertyTable.ollamaTimeoutMs = '120000'
+    propertyTable.ollamaTimeoutMs = '300000'
     propertyTable.defaultProvider = 'ollama'
     propertyTable.availableModelItems = uniqueModelItems(nil, 'qwen2.5vl:7b', 'qwen2.5vl:3b')
     propertyTable.ollamaModel = 'qwen2.5vl:7b'
@@ -360,28 +403,6 @@ function PluginInfoProvider.sectionsForTopOfDialog(f, propertyTable)
                 f:static_text({ title = 'Default category', width = 120, alignment = 'right' }),
                 f:popup_menu({ value = bind('defaultCategory'), items = CategoryOptions }),
             }),
-            f:row({
-                spacing = f:label_spacing(),
-                f:static_text({ title = 'Juror subset', width = 120, alignment = 'right' }),
-                f:edit_field({ value = bind('defaultJurorSubset'), width_in_chars = 20 }),
-            }),
-            f:row({
-                spacing = f:label_spacing(),
-                f:static_text({ title = '', width = 120 }),
-                f:static_text({ title = 'Blank uses all jurors. Example: 1,3, 2', width_in_chars = 45 }),
-            }),
-            f:row({
-                spacing = f:control_spacing(),
-                f:push_button({
-                    title = 'Refresh From Service',
-                    action = function()
-                        persistPrefs(propertyTable)
-                        LrTasks.startAsyncTask(function()
-                            refreshFromService(propertyTable)
-                        end)
-                    end,
-                }),
-            }),
         },
         {
             title = 'Local Service Configuration',
@@ -414,8 +435,31 @@ function PluginInfoProvider.sectionsForTopOfDialog(f, propertyTable)
             }),
             f:row({
                 spacing = f:label_spacing(),
+                f:static_text({ title = 'Juror subset', width = 120, alignment = 'right' }),
+                f:edit_field({ value = bind('serviceJurorSubset'), width_in_chars = 20 }),
+            }),
+            f:row({
+                spacing = f:label_spacing(),
+                f:static_text({ title = '', width = 120 }),
+                f:static_text({ title = 'Blank uses all jurors. Click Save Settings to apply changes.', width_in_chars = 50 }),
+            }),
+            f:row({
+                spacing = f:label_spacing(),
                 f:static_text({ title = 'Available models', width = 120, alignment = 'right' }),
                 f:static_text({ title = bind('availableModelsText'), width_in_chars = 50 }),
+            }),
+            f:row({
+                spacing = f:control_spacing(),
+                f:static_text({ title = '', width = 120 }),
+                f:push_button({
+                    title = 'Refresh From Service',
+                    action = function()
+                        persistPluginPrefs(propertyTable)
+                        LrTasks.startAsyncTask(function()
+                            refreshFromService(propertyTable)
+                        end)
+                    end,
+                }),
             }),
             f:row({
                 spacing = f:label_spacing(),
@@ -425,7 +469,15 @@ function PluginInfoProvider.sectionsForTopOfDialog(f, propertyTable)
             f:row({
                 spacing = f:label_spacing(),
                 f:static_text({ title = 'Config source', width = 120, alignment = 'right' }),
-                f:static_text({ title = bind('serviceConfigOrigin'), width_in_chars = 50 }),
+                f:static_text({ title = bind('serviceConfigOrigin'), width_in_chars = 35 }),
+                f:push_button({
+                    title = 'Open Folder',
+                    action = function()
+                        LrTasks.startAsyncTask(function()
+                            openConfigFolder(propertyTable)
+                        end)
+                    end,
+                }),
             }),
             f:row({
                 spacing = f:label_spacing(),
@@ -439,14 +491,6 @@ function PluginInfoProvider.sectionsForTopOfDialog(f, propertyTable)
                     action = function()
                         LrTasks.startAsyncTask(function()
                             saveToService(propertyTable)
-                        end)
-                    end,
-                }),
-                f:push_button({
-                    title = 'Reload Service Settings',
-                    action = function()
-                        LrTasks.startAsyncTask(function()
-                            refreshFromService(propertyTable)
                         end)
                     end,
                 }),

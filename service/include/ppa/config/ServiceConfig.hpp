@@ -16,7 +16,7 @@ struct OllamaSettings {
     std::string base_url{"http://127.0.0.1:11434"};
     std::string model{"qwen2.5vl:7b"};
     std::string fallback_model{"qwen2.5vl:3b"};
-    int timeout_ms{120000};
+    int timeout_ms{300000};
 };
 
 struct SemanticSettings {
